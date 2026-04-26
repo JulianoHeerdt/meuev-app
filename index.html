@@ -1,665 +1,564 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Meu EV — Painel Web</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 
-  <!-- Firebase SDKs -->
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
-             sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup,
-             createUserWithEmailAndPassword }
-      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-    import { getFirestore, collection, doc, getDocs, getDoc, orderBy, query }
-      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+           sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup,
+           createUserWithEmailAndPassword }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getFirestore, collection, doc, getDocs, getDoc, setDoc,
+           deleteDoc, orderBy, query }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    // ── Firebase config (mesmo projeto do app Android) ──────────────
-    const firebaseConfig = {
-      apiKey: "AIzaSyB5HE2v3MV9NaqsaPian4LLiK7CReity60",
-      authDomain: "meu-ev.firebaseapp.com",
-      projectId: "meu-ev",
-      storageBucket: "meu-ev.firebasestorage.app",
-      messagingSenderId: "754930549464",
-      appId: "1:754930549464:web:1ff7a2ca812fa836088dad"
+  const app  = initializeApp({
+    apiKey: "AIzaSyB5HE2v3MV9NaqsaPian4LLiK7CReity60",
+    authDomain: "meu-ev.firebaseapp.com",
+    projectId: "meu-ev",
+    storageBucket: "meu-ev.firebasestorage.app",
+    messagingSenderId: "754930549464",
+    appId: "1:754930549464:web:1ff7a2ca812fa836088dad"
+  });
+  const auth     = getAuth(app);
+  const db       = getFirestore(app);
+  const provider = new GoogleAuthProvider();
+
+  // ── Helpers ──────────────────────────────────────────────────────
+  const fmtBRL  = v => v!=null ? new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v) : '--';
+  const fmtNum  = (v,d=1,s='') => (v==null||v===0) ? '--' : v.toFixed(d)+s;
+  const fmtDate = s => { if(!s) return '--'; return new Date(s).toLocaleDateString('pt-BR'); };
+  const uid     = () => auth.currentUser?.uid;
+  const genId   = () => Date.now().toString(36)+Math.random().toString(36).slice(2);
+
+  // ── State ────────────────────────────────────────────────────────
+  let RECARGAS=[], MANUTENCOES=[], CONFIG=null;
+  let chartConsumo=null, chartGastos=null;
+  let filtroLocal='', filtroDataIni='', filtroDataFim='';
+
+  // ── Auth ─────────────────────────────────────────────────────────
+  onAuthStateChanged(auth, async user => {
+    if(user){ document.getElementById('user-email').textContent=user.displayName||user.email; showApp(); await carregarTudo(); }
+    else showLogin();
+  });
+
+  window.doGoogleLogin = async () => {
+    const btn=document.getElementById('google-btn');
+    btn.disabled=true; btn.textContent='Aguarde…';
+    try { await signInWithPopup(auth,provider); }
+    catch(e){ showToast('Erro Google: '+e.message,true); btn.disabled=false; btn.innerHTML='<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google'; }
+  };
+
+  let modoLogin=true;
+  window.toggleModo = () => {
+    modoLogin=!modoLogin;
+    document.getElementById('login-title').textContent   = modoLogin?'Meu EV':'Criar conta';
+    document.getElementById('login-btn').textContent     = modoLogin?'Entrar':'Cadastrar';
+    document.getElementById('toggle-modo').textContent   = modoLogin?'Não tem conta? Cadastre-se':'Já tem conta? Entrar';
+    document.getElementById('forgot-link').style.display = modoLogin?'block':'none';
+    document.getElementById('google-wrap').style.display = modoLogin?'block':'none';
+    document.getElementById('confirm-wrap').style.display= modoLogin?'none':'block';
+  };
+
+  window.doLogin = async () => {
+    const email=document.getElementById('email').value.trim();
+    const pass =document.getElementById('pass').value;
+    const btn  =document.getElementById('login-btn');
+    if(!modoLogin){
+      const c=document.getElementById('pass-confirm').value;
+      if(pass!==c){showToast('As senhas não coincidem.',true);return;}
+      if(pass.length<6){showToast('Senha: mínimo 6 caracteres.',true);return;}
+      btn.disabled=true; btn.textContent='Cadastrando…';
+      try{ await createUserWithEmailAndPassword(auth,email,pass); showToast('Conta criada!'); }
+      catch(e){ showToast('Erro: '+(e.code==='auth/email-already-in-use'?'E-mail já cadastrado.':e.message),true); btn.disabled=false; btn.textContent='Cadastrar'; }
+      return;
+    }
+    btn.disabled=true; btn.textContent='Entrando…';
+    try{ await signInWithEmailAndPassword(auth,email,pass); }
+    catch(e){ showToast('E-mail ou senha incorretos.',true); btn.disabled=false; btn.textContent='Entrar'; }
+  };
+
+  window.doLogout = () => signOut(auth);
+
+  window.doForgot = async () => {
+    const email=document.getElementById('email').value.trim();
+    if(!email){showToast('Digite seu e-mail primeiro.',true);return;}
+    try{ await sendPasswordResetEmail(auth,email); showToast('E-mail de recuperação enviado!'); }
+    catch(e){ showToast('Erro: '+e.message,true); }
+  };
+
+  // ── Dados ─────────────────────────────────────────────────────────
+  async function carregarTudo(){
+    showLoading(true);
+    try{
+      const userDoc=await getDoc(doc(db,'usuarios',uid()));
+      CONFIG=userDoc.exists()&&userDoc.data().configuracao?userDoc.data().configuracao:null;
+      const [rSnap,mSnap]=await Promise.all([
+        getDocs(query(collection(db,'usuarios',uid(),'recargas'),  orderBy('data','desc'))),
+        getDocs(query(collection(db,'usuarios',uid(),'manutencoes'),orderBy('data','desc')))
+      ]);
+      RECARGAS   =rSnap.docs.map(d=>({...d.data(),id:d.id}));
+      MANUTENCOES=mSnap.docs.map(d=>({...d.data(),id:d.id}));
+      renderAll();
+    }catch(e){ showToast('Erro ao carregar: '+e.message,true); }
+    finally{ showLoading(false); }
+  }
+
+  function renderAll(){ renderVeiculoInfo(); renderDashboard(); renderHistorico(); renderManutencoes(); renderGraficoConsumo(); renderGraficoGastos(); }
+  window.doRefresh = () => carregarTudo();
+
+  function calcStats(){
+    const totalKwh  =RECARGAS.reduce((s,r)=>s+(r.kwh||0),0);
+    const totalCusto=RECARGAS.reduce((s,r)=>s+(r.custo_total||0),0);
+    const totalKm   =RECARGAS.reduce((s,r)=>s+((r.odometro_fim||0)-(r.odometro_inicio||0)),0);
+    return{
+      totalKwh,totalCusto,totalKm,
+      consumoMed : totalKwh>0?totalKm/totalKwh:0,
+      custoPorKm : totalKm>0?totalCusto/totalKm:0,
+      custoPorKwh: totalKwh>0?totalCusto/totalKwh:0,
+      totalManut : MANUTENCOES.reduce((s,m)=>s+(m.custo||0),0)
     };
+  }
 
-    const app      = initializeApp(firebaseConfig);
-    const auth     = getAuth(app);
-    const db       = getFirestore(app);
-    const provider = new GoogleAuthProvider();
+  // ── Dashboard ─────────────────────────────────────────────────────
+  function renderVeiculoInfo(){
+    if(!CONFIG){document.getElementById('veiculo-nome').textContent='Veículo não configurado';return;}
+    const name=CONFIG.ano?`${CONFIG.fabricante} ${CONFIG.modelo} (${CONFIG.ano})`:`${CONFIG.fabricante} ${CONFIG.modelo}`;
+    document.getElementById('veiculo-nome').textContent=name;
+    document.getElementById('veiculo-bat').textContent=fmtNum(CONFIG.capacidade_bateria_kwh,1,' kWh');
+    document.getElementById('veiculo-aut').textContent=fmtNum(CONFIG.autonomia_inmetro_km,0,' km');
+  }
 
-    // ── helpers ─────────────────────────────────────────────────────
-    const fmtBRL = v => v != null ? new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v) : '--';
-    const fmtNum = (v, d=1, suf='') => (v == null || v === 0) ? '--' : v.toFixed(d)+suf;
-    const fmtDate = s => {
-      if (!s) return '--';
-      const d = new Date(s);
-      return d.toLocaleDateString('pt-BR');
-    };
-
-    // ── UI state ────────────────────────────────────────────────────
-    let RECARGAS = [], MANUTENCOES = [], CONFIG = null;
-    let currentTab = 'dashboard';
-
-    // ── AUTH listeners ───────────────────────────────────────────────
-    onAuthStateChanged(auth, async user => {
-      if (user) {
-        showApp();
-        document.getElementById('user-email').textContent = user.email;
-        await carregarTudo(user.uid);
-      } else {
-        showLogin();
-      }
+  function renderDashboard(){
+    const s=calcStats();
+    document.getElementById('stat-kwh').textContent     =fmtNum(s.totalKwh,1,' kWh');
+    document.getElementById('stat-km').textContent      =fmtNum(s.totalKm,0,' km');
+    document.getElementById('stat-custo').textContent   =fmtBRL(s.totalCusto);
+    document.getElementById('stat-consumo').textContent =fmtNum(s.consumoMed,2,' km/kWh');
+    document.getElementById('stat-custoKm').textContent =fmtBRL(s.custoPorKm)+'/km';
+    document.getElementById('stat-custoKwh').textContent=fmtBRL(s.custoPorKwh)+'/kWh';
+    document.getElementById('stat-manut').textContent   =fmtBRL(s.totalManut);
+    document.getElementById('stat-recargas').textContent=RECARGAS.length;
+    const ul=document.getElementById('ultimas-recargas'); ul.innerHTML='';
+    RECARGAS.slice(0,5).forEach(r=>{
+      const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
+      ul.insertAdjacentHTML('beforeend',`
+        <div class="list-item">
+          <div class="list-item-left"><div class="bolt-icon">⚡</div>
+            <div><div class="list-title">${r.local||'Recarga'}</div>
+            <div class="list-sub">${fmtDate(r.data)} · ${fmtNum(km,0,'km')} percorridos</div></div>
+          </div>
+          <div class="list-right"><div class="list-value">${fmtNum(r.kwh,2,' kWh')}</div><div class="list-cost">${fmtBRL(r.custo_total)}</div></div>
+        </div>`);
     });
-
-    async function carregarTudo(uid) {
-      showLoading(true);
-      try {
-        // Config do veículo
-        const userDoc = await getDoc(doc(db, 'usuarios', uid));
-        CONFIG = userDoc.exists() && userDoc.data().configuracao
-          ? userDoc.data().configuracao : null;
-        if (CONFIG) renderVeiculoInfo();
-
-        // Recargas
-        const rSnap = await getDocs(query(collection(db,'usuarios',uid,'recargas'), orderBy('data','desc')));
-        RECARGAS = rSnap.docs.map(d => ({...d.data(), id: d.id}));
-
-        // Manutenções
-        const mSnap = await getDocs(query(collection(db,'usuarios',uid,'manutencoes'), orderBy('data','desc')));
-        MANUTENCOES = mSnap.docs.map(d => ({...d.data(), id: d.id}));
-
-        renderDashboard();
-        renderHistorico();
-        renderManutencoes();
-      } catch(e) {
-        console.error(e);
-        showToast('Erro ao carregar dados: ' + e.message, true);
-      } finally {
-        showLoading(false);
-      }
+    if(!RECARGAS.length) ul.innerHTML='<p class="empty">Nenhuma recarga registrada.</p>';
+    if(CONFIG){
+      const gasol=s.totalKm>0?(s.totalKm/(CONFIG.consumo_combustivel||12))*(CONFIG.preco_combustivel||6):0;
+      document.getElementById('comb-gasto').textContent=fmtBRL(gasol);
+      document.getElementById('comb-ev').textContent   =fmtBRL(s.totalCusto);
+      document.getElementById('comb-eco').textContent  =fmtBRL(Math.max(0,gasol-s.totalCusto));
     }
+  }
 
-    // ── Stats ────────────────────────────────────────────────────────
-    function calcStats() {
-      const totalKwh    = RECARGAS.reduce((s,r) => s + (r.kwh||0), 0);
-      const totalCusto  = RECARGAS.reduce((s,r) => s + (r.custo_total||0), 0);
-      const totalKm     = RECARGAS.reduce((s,r) => s + ((r.odometro_fim||0)-(r.odometro_inicio||0)), 0);
-      const consumoMed  = totalKwh > 0 ? totalKm / totalKwh : 0;
-      const custoPorKm  = totalKm  > 0 ? totalCusto / totalKm : 0;
-      const custoPorKwh = totalKwh > 0 ? totalCusto / totalKwh : 0;
-      const totalManut  = MANUTENCOES.reduce((s,m) => s + (m.custo||0), 0);
-      return { totalKwh, totalCusto, totalKm, consumoMed, custoPorKm, custoPorKwh, totalManut };
+  // ── Gráficos ──────────────────────────────────────────────────────
+  const chartOpts = (yFmt) => ({
+    responsive:true, maintainAspectRatio:false,
+    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>yFmt(c.parsed.y)}}},
+    scales:{
+      x:{ticks:{color:'#8899AA',font:{size:10}},grid:{color:'#1E2D42'}},
+      y:{ticks:{color:'#8899AA',font:{size:10},callback:yFmt},grid:{color:'#1E2D42'}}
     }
+  });
 
-    // ── Render dashboard ─────────────────────────────────────────────
-    function renderVeiculoInfo() {
-      const c = CONFIG;
-      if (!c) return;
-      const name = c.ano ? `${c.fabricante} ${c.modelo} (${c.ano})` : `${c.fabricante} ${c.modelo}`;
-      document.getElementById('veiculo-nome').textContent = name;
-      document.getElementById('veiculo-bat').textContent  = fmtNum(c.capacidade_bateria_kwh,1,' kWh');
-      document.getElementById('veiculo-aut').textContent  = fmtNum(c.autonomia_inmetro_km,0,' km');
-    }
+  function renderGraficoConsumo(){
+    const dados=RECARGAS.slice(0,12).reverse();
+    const labels=dados.map(r=>fmtDate(r.data).slice(0,5));
+    const vals=dados.map(r=>{ const km=(r.odometro_fim||0)-(r.odometro_inicio||0); return(km>0&&r.kwh>0)?parseFloat((km/r.kwh).toFixed(2)):0; });
+    const ctx=document.getElementById('chart-consumo').getContext('2d');
+    if(chartConsumo) chartConsumo.destroy();
+    chartConsumo=new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'km/kWh',data:vals,borderColor:'#00E676',backgroundColor:'rgba(0,230,118,0.08)',borderWidth:2,pointBackgroundColor:'#00E676',pointRadius:4,tension:0.4,fill:true}]},options:chartOpts(v=>v.toFixed(2)+' km/kWh')});
+  }
 
-    function renderDashboard() {
-      const s = calcStats();
-      document.getElementById('stat-kwh').textContent        = fmtNum(s.totalKwh,1,' kWh');
-      document.getElementById('stat-km').textContent         = fmtNum(s.totalKm,0,' km');
-      document.getElementById('stat-custo').textContent      = fmtBRL(s.totalCusto);
-      document.getElementById('stat-consumo').textContent    = fmtNum(s.consumoMed,2,' km/kWh');
-      document.getElementById('stat-custoKm').textContent    = fmtBRL(s.custoPorKm) + '/km';
-      document.getElementById('stat-custoKwh').textContent   = fmtBRL(s.custoPorKwh) + '/kWh';
-      document.getElementById('stat-manut').textContent      = fmtBRL(s.totalManut);
-      document.getElementById('stat-recargas').textContent   = RECARGAS.length;
+  function renderGraficoGastos(){
+    const meses={};
+    [...RECARGAS].reverse().forEach(r=>{ const m=new Date(r.data).toLocaleDateString('pt-BR',{month:'short',year:'2-digit'}); meses[m]=(meses[m]||0)+(r.custo_total||0); });
+    const labels=Object.keys(meses).slice(-8);
+    const vals=labels.map(k=>parseFloat(meses[k].toFixed(2)));
+    const ctx=document.getElementById('chart-gastos').getContext('2d');
+    if(chartGastos) chartGastos.destroy();
+    chartGastos=new Chart(ctx,{type:'bar',data:{labels,datasets:[{label:'R$',data:vals,backgroundColor:'rgba(64,196,255,0.45)',borderColor:'#40C4FF',borderWidth:1,borderRadius:6}]},options:chartOpts(v=>fmtBRL(v))});
+  }
 
-      // Últimas 5 recargas
-      const ul = document.getElementById('ultimas-recargas');
-      ul.innerHTML = '';
-      RECARGAS.slice(0,5).forEach(r => {
-        const km = (r.odometro_fim||0) - (r.odometro_inicio||0);
-        ul.insertAdjacentHTML('beforeend', `
-          <div class="list-item">
-            <div class="list-item-left">
-              <div class="bolt-icon">⚡</div>
-              <div>
-                <div class="list-title">${r.local || 'Recarga'}</div>
-                <div class="list-sub">${fmtDate(r.data)} · ${fmtNum(km,0,'km')} percorridos</div>
-              </div>
-            </div>
-            <div class="list-right">
-              <div class="list-value">${fmtNum(r.kwh,2,' kWh')}</div>
-              <div class="list-cost">${fmtBRL(r.custo_total)}</div>
-            </div>
-          </div>`);
-      });
-      if (RECARGAS.length === 0) ul.innerHTML = '<p class="empty">Nenhuma recarga registrada.</p>';
-
-      // Comparativo combustível
-      if (CONFIG) {
-        const s2 = calcStats();
-        const economiaCombKm = CONFIG.consumo_combustivel || 12;
-        const precoComb = CONFIG.preco_combustivel || 6.0;
-        const custoSeGasolina = s2.totalKm > 0 ? (s2.totalKm / economiaCombKm) * precoComb : 0;
-        const economia = custoSeGasolina - s2.totalCusto;
-        document.getElementById('comb-gasto').textContent  = fmtBRL(custoSeGasolina);
-        document.getElementById('comb-ev').textContent     = fmtBRL(s2.totalCusto);
-        document.getElementById('comb-eco').textContent    = fmtBRL(Math.max(0, economia));
-      }
-
-      renderGrafico();
-    }
-
-    function renderGrafico() {
-      // Últimas 10 recargas para o gráfico de barras simples
-      const dados = RECARGAS.slice(0,10).reverse();
-      const container = document.getElementById('grafico-barras');
-      if (!dados.length) { container.innerHTML = '<p class="empty">Sem dados para exibir.</p>'; return; }
-      const maxKwh = Math.max(...dados.map(r => r.kwh||0));
-      container.innerHTML = dados.map(r => {
-        const pct = maxKwh > 0 ? ((r.kwh||0)/maxKwh*100) : 0;
-        return `<div class="bar-wrap">
-          <div class="bar-label">${fmtNum(r.kwh,1)}</div>
-          <div class="bar-outer"><div class="bar-inner" style="height:${pct}%"></div></div>
-          <div class="bar-date">${fmtDate(r.data).slice(0,5)}</div>
-        </div>`;
-      }).join('');
-    }
-
-    function renderHistorico() {
-      const tbody = document.getElementById('hist-tbody');
-      tbody.innerHTML = '';
-      if (!RECARGAS.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">Nenhuma recarga.</td></tr>';
-        return;
-      }
-      RECARGAS.forEach(r => {
-        const km = (r.odometro_fim||0) - (r.odometro_inicio||0);
-        const cons = km > 0 && r.kwh > 0 ? (km/r.kwh).toFixed(2) : '--';
-        tbody.insertAdjacentHTML('beforeend', `
-          <tr>
-            <td>${fmtDate(r.data)}</td>
-            <td>${r.local || '--'}</td>
-            <td class="num">${fmtNum(r.kwh,2,' kWh')}</td>
-            <td class="num">${fmtNum(km,0,' km')}</td>
-            <td class="num">${cons} km/kWh</td>
-            <td class="num">${fmtBRL(r.custo_total)}</td>
-            <td><span class="badge ${r.tipo_recarga === 'DC' ? 'badge-blue' : 'badge-green'}">${r.tipo_recarga || 'AC'}</span></td>
-          </tr>`);
-      });
-    }
-
-    function renderManutencoes() {
-      const tbody = document.getElementById('manut-tbody');
-      tbody.innerHTML = '';
-      if (!MANUTENCOES.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">Nenhuma manutenção.</td></tr>';
-        return;
-      }
-      MANUTENCOES.forEach(m => {
-        tbody.insertAdjacentHTML('beforeend', `
-          <tr>
-            <td>${fmtDate(m.data)}</td>
-            <td>${m.tipo || '--'}</td>
-            <td>${m.descricao || '--'}</td>
-            <td class="num">${fmtNum(m.odometro,0,' km')}</td>
-            <td class="num">${fmtBRL(m.custo)}</td>
-          </tr>`);
-      });
-    }
-
-    // ── Navegação ────────────────────────────────────────────────────
-    window.navTo = function(tab) {
-      currentTab = tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-'+tab));
-    };
-
-    // ── Auth actions ─────────────────────────────────────────────────
-    let modoLogin = true; // true=login, false=cadastro
-
-    window.toggleModo = function() {
-      modoLogin = !modoLogin;
-      document.getElementById('login-title').textContent     = modoLogin ? 'Meu EV' : 'Criar conta';
-      document.getElementById('login-btn').textContent       = modoLogin ? 'Entrar' : 'Cadastrar';
-      document.getElementById('toggle-modo').textContent     = modoLogin ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Entrar';
-      document.getElementById('forgot-link').style.display   = modoLogin ? 'block' : 'none';
-      document.getElementById('google-wrap').style.display   = modoLogin ? 'block' : 'none';
-      document.getElementById('confirm-wrap').style.display  = modoLogin ? 'none' : 'block';
-    };
-
-    window.doGoogleLogin = async function() {
-      const btn = document.getElementById('google-btn');
-      btn.disabled = true;
-      btn.textContent = 'Aguarde…';
-      try {
-        await signInWithPopup(auth, provider);
-      } catch(e) {
-        showToast('Erro Google: ' + e.message, true);
-        btn.disabled = false;
-        btn.innerHTML = '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google';
-      }
-    };
-
-    window.doLogin = async function() {
-      const email = document.getElementById('email').value.trim();
-      const pass  = document.getElementById('pass').value;
-      const btn   = document.getElementById('login-btn');
-
-      if (!modoLogin) {
-        // ── Cadastro ──
-        const confirm = document.getElementById('pass-confirm').value;
-        if (pass !== confirm) { showToast('As senhas não coincidem.', true); return; }
-        if (pass.length < 6)  { showToast('Senha deve ter ao menos 6 caracteres.', true); return; }
-        btn.disabled = true; btn.textContent = 'Cadastrando…';
-        try {
-          await createUserWithEmailAndPassword(auth, email, pass);
-          showToast('Conta criada com sucesso!');
-        } catch(e) {
-          const msg = e.code === 'auth/email-already-in-use' ? 'E-mail já cadastrado.' : e.message;
-          showToast('Erro: ' + msg, true);
-          btn.disabled = false; btn.textContent = 'Cadastrar';
-        }
-        return;
-      }
-
-      // ── Login ──
-      btn.disabled = true; btn.textContent = 'Entrando…';
-      try {
-        await signInWithEmailAndPassword(auth, email, pass);
-      } catch(e) {
-        showToast('Erro: ' + (e.code === 'auth/invalid-credential' ? 'E-mail ou senha incorretos.' : e.message), true);
-        btn.disabled = false; btn.textContent = 'Entrar';
-      }
-    };
-
-    window.doLogout = async function() {
-      await signOut(auth);
-    };
-
-    window.doForgot = async function() {
-      const email = document.getElementById('email').value.trim();
-      if (!email) { showToast('Digite seu e-mail primeiro.', true); return; }
-      try {
-        await sendPasswordResetEmail(auth, email);
-        showToast('E-mail de recuperação enviado!');
-      } catch(e) {
-        showToast('Erro: ' + e.message, true);
-      }
-    };
-
-    window.doRefresh = async function() {
-      const user = auth.currentUser;
-      if (user) await carregarTudo(user.uid);
-    };
-
-    // ── UI helpers ───────────────────────────────────────────────────
-    function showLogin() {
-      document.getElementById('login-view').style.display = 'flex';
-      document.getElementById('app-view').style.display   = 'none';
-    }
-    function showApp() {
-      document.getElementById('login-view').style.display = 'none';
-      document.getElementById('app-view').style.display   = 'flex';
-      navTo('dashboard');
-    }
-    function showLoading(v) {
-      document.getElementById('loader').style.display = v ? 'flex' : 'none';
-    }
-    function showToast(msg, err=false) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.className   = 'toast show' + (err ? ' error' : '');
-      setTimeout(() => t.className = 'toast', 3500);
-    }
-
-    // Enter key on login form
-    document.addEventListener('DOMContentLoaded', () => {
-      document.getElementById('pass').addEventListener('keydown', e => {
-        if (e.key === 'Enter') window.doLogin();
-      });
+  // ── Filtros ───────────────────────────────────────────────────────
+  window.aplicarFiltros = () => {
+    filtroLocal  =document.getElementById('f-local').value.toLowerCase();
+    filtroDataIni=document.getElementById('f-data-ini').value;
+    filtroDataFim=document.getElementById('f-data-fim').value;
+    renderHistorico();
+  };
+  window.limparFiltros = () => {
+    ['f-local','f-data-ini','f-data-fim'].forEach(id=>document.getElementById(id).value='');
+    filtroLocal=filtroDataIni=filtroDataFim=''; renderHistorico();
+  };
+  function recargasFiltradas(){
+    return RECARGAS.filter(r=>{
+      if(filtroLocal&&!(r.local||'').toLowerCase().includes(filtroLocal)) return false;
+      if(filtroDataIni&&r.data<filtroDataIni) return false;
+      if(filtroDataFim&&r.data>filtroDataFim+'T23:59:59') return false;
+      return true;
     });
+  }
+
+  // ── Histórico ─────────────────────────────────────────────────────
+  function renderHistorico(){
+    const lista=recargasFiltradas();
+    const tbody=document.getElementById('hist-tbody'); tbody.innerHTML='';
+    if(!lista.length){ tbody.innerHTML='<tr><td colspan="8" class="empty">Nenhuma recarga encontrada.</td></tr>'; return; }
+    lista.forEach(r=>{
+      const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
+      const cons=km>0&&r.kwh>0?(km/r.kwh).toFixed(2):'--';
+      tbody.insertAdjacentHTML('beforeend',`<tr>
+        <td>${fmtDate(r.data)}</td><td>${r.local||'--'}</td>
+        <td class="num">${fmtNum(r.kwh,2,' kWh')}</td><td class="num">${fmtNum(km,0,' km')}</td>
+        <td class="num">${cons} km/kWh</td><td class="num">${fmtBRL(r.custo_total)}</td>
+        <td><span class="badge ${r.tipo_recarga==='DC'?'badge-blue':'badge-green'}">${r.tipo_recarga||'AC'}</span></td>
+        <td><button class="btn-del" onclick="deletarRecarga('${r.id}')">🗑</button></td>
+      </tr>`);
+    });
+  }
+
+  // ── Manutenções ───────────────────────────────────────────────────
+  function renderManutencoes(){
+    const tbody=document.getElementById('manut-tbody'); tbody.innerHTML='';
+    if(!MANUTENCOES.length){ tbody.innerHTML='<tr><td colspan="7" class="empty">Nenhuma manutenção.</td></tr>'; return; }
+    MANUTENCOES.forEach(m=>{
+      tbody.insertAdjacentHTML('beforeend',`<tr>
+        <td>${fmtDate(m.data)}</td><td>${m.tipo||'--'}</td><td>${m.descricao||'--'}</td>
+        <td>${m.fornecedor||'--'}</td><td class="num">${fmtNum(m.odometro,0,' km')}</td>
+        <td class="num">${fmtBRL(m.custo)}</td>
+        <td><button class="btn-del" onclick="deletarManutencao('${m.id}')">🗑</button></td>
+      </tr>`);
+    });
+  }
+
+  // ── Modal Recarga ─────────────────────────────────────────────────
+  window.abrirModalRecarga = () => {
+    document.getElementById('form-recarga').reset();
+    document.getElementById('rec-data').value=new Date().toISOString().slice(0,16);
+    document.getElementById('modal-recarga').classList.add('open');
+  };
+  window.fecharModalRecarga = () => document.getElementById('modal-recarga').classList.remove('open');
+
+  window.salvarRecarga = async () => {
+    const data =document.getElementById('rec-data').value;
+    const odIni=parseFloat(document.getElementById('rec-od-ini').value);
+    const odFim=parseFloat(document.getElementById('rec-od-fim').value);
+    const kwh  =parseFloat(document.getElementById('rec-kwh').value);
+    const custo=parseFloat(document.getElementById('rec-custo').value);
+    const local=document.getElementById('rec-local').value.trim();
+    const tipo =document.getElementById('rec-tipo').value;
+    const obs  =document.getElementById('rec-obs').value.trim();
+    if(!data||isNaN(odIni)||isNaN(odFim)||isNaN(kwh)||isNaN(custo)){showToast('Preencha todos os campos obrigatórios.',true);return;}
+    if(odFim<=odIni){showToast('Odômetro fim deve ser maior que início.',true);return;}
+    const id=genId();
+    const rec={id,data:new Date(data).toISOString(),odometro_inicio:odIni,odometro_fim:odFim,kwh,custo_total:custo,local,tipo_recarga:tipo,observacao:obs};
+    try{
+      await setDoc(doc(db,'usuarios',uid(),'recargas',id),rec);
+      RECARGAS.unshift(rec); RECARGAS.sort((a,b)=>b.data.localeCompare(a.data));
+      renderAll(); fecharModalRecarga(); showToast('Recarga salva! ⚡');
+    }catch(e){ showToast('Erro ao salvar: '+e.message,true); }
+  };
+
+  window.deletarRecarga = async id => {
+    if(!confirm('Excluir esta recarga?')) return;
+    try{ await deleteDoc(doc(db,'usuarios',uid(),'recargas',id)); RECARGAS=RECARGAS.filter(r=>r.id!==id); renderAll(); showToast('Recarga excluída.'); }
+    catch(e){ showToast('Erro: '+e.message,true); }
+  };
+
+  // ── Modal Manutenção ──────────────────────────────────────────────
+  window.abrirModalManutencao = () => {
+    document.getElementById('form-manutencao').reset();
+    document.getElementById('man-data').value=new Date().toISOString().slice(0,10);
+    document.getElementById('modal-manutencao').classList.add('open');
+  };
+  window.fecharModalManutencao = () => document.getElementById('modal-manutencao').classList.remove('open');
+
+  window.salvarManutencao = async () => {
+    const data      =document.getElementById('man-data').value;
+    const tipo      =document.getElementById('man-tipo').value.trim();
+    const descricao =document.getElementById('man-desc').value.trim();
+    const custo     =parseFloat(document.getElementById('man-custo').value);
+    const odometro  =parseFloat(document.getElementById('man-od').value);
+    const fornecedor=document.getElementById('man-forn').value.trim();
+    if(!data||!tipo||!descricao||isNaN(custo)||isNaN(odometro)){showToast('Preencha todos os campos obrigatórios.',true);return;}
+    const id=genId();
+    const m={id,data:new Date(data).toISOString(),tipo,descricao,custo,odometro,fornecedor};
+    try{
+      await setDoc(doc(db,'usuarios',uid(),'manutencoes',id),m);
+      MANUTENCOES.unshift(m); MANUTENCOES.sort((a,b)=>b.data.localeCompare(a.data));
+      renderManutencoes(); renderDashboard(); fecharModalManutencao(); showToast('Manutenção salva! 🔧');
+    }catch(e){ showToast('Erro ao salvar: '+e.message,true); }
+  };
+
+  window.deletarManutencao = async id => {
+    if(!confirm('Excluir esta manutenção?')) return;
+    try{ await deleteDoc(doc(db,'usuarios',uid(),'manutencoes',id)); MANUTENCOES=MANUTENCOES.filter(m=>m.id!==id); renderManutencoes(); renderDashboard(); showToast('Manutenção excluída.'); }
+    catch(e){ showToast('Erro: '+e.message,true); }
+  };
+
+  // ── CSV Export ────────────────────────────────────────────────────
+  function downloadCSV(nome,conteudo){
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob(['\uFEFF'+conteudo],{type:'text/csv;charset=utf-8;'}));
+    a.download=nome; a.click();
+  }
+
+  window.exportarRecargasCSV = () => {
+    const lista=recargasFiltradas();
+    if(!lista.length){showToast('Nenhuma recarga para exportar.',true);return;}
+    const rows=lista.map(r=>{
+      const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
+      return [fmtDate(r.data),r.local||'',r.kwh,r.odometro_inicio,r.odometro_fim,km,r.custo_total,r.tipo_recarga||'AC',r.observacao||''].join(',');
+    });
+    downloadCSV('recargas_meuev.csv',['Data,Local,kWh,Odômetro Ini,Odômetro Fim,Km,Custo Total,Tipo,Observação',...rows].join('\n'));
+    showToast('CSV exportado! 📥');
+  };
+
+  window.exportarManutencoesCSV = () => {
+    if(!MANUTENCOES.length){showToast('Nenhuma manutenção para exportar.',true);return;}
+    const rows=MANUTENCOES.map(m=>[fmtDate(m.data),m.tipo,m.descricao,m.fornecedor||'',m.odometro,m.custo].join(','));
+    downloadCSV('manutencoes_meuev.csv',['Data,Tipo,Descrição,Fornecedor,Odômetro,Custo',...rows].join('\n'));
+    showToast('CSV exportado! 📥');
+  };
+
+  // ── CSV Import ────────────────────────────────────────────────────
+  window.importarCSV = () => document.getElementById('csv-input').click();
+  window.processarCSV = async input => {
+    const file=input.files[0]; if(!file) return;
+    const text=await file.text();
+    const linhas=text.split('\n').slice(1).filter(l=>l.trim());
+    let ok=0,erros=0; showLoading(true);
+    for(const linha of linhas){
+      try{
+        const cols=linha.split(',');
+        const [dataStr,local,kwh,odIni,odFim,,custo,tipo,obs]=cols;
+        const parts=dataStr.trim().split('/');
+        const iso=new Date(`${parts[2]}-${parts[1]}-${parts[0]}`).toISOString();
+        const id=genId();
+        await setDoc(doc(db,'usuarios',uid(),'recargas',id),{id,data:iso,odometro_inicio:parseFloat(odIni),odometro_fim:parseFloat(odFim),kwh:parseFloat(kwh),custo_total:parseFloat(custo),local:local?.trim()||'',tipo_recarga:tipo?.trim()||'AC',observacao:obs?.trim()||''});
+        ok++;
+      }catch(e){ erros++; }
+    }
+    await carregarTudo();
+    showToast(`Importadas: ${ok} recargas${erros?`, ${erros} erros`:''}.`);
+    input.value='';
+  };
+
+  // ── Nav ───────────────────────────────────────────────────────────
+  window.navTo = tab => {
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+    document.querySelectorAll('.tab-panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+tab));
+  };
+
+  // ── UI ────────────────────────────────────────────────────────────
+  function showLogin(){ document.getElementById('login-view').style.display='flex'; document.getElementById('app-view').style.display='none'; }
+  function showApp()  { document.getElementById('login-view').style.display='none'; document.getElementById('app-view').style.display='flex'; navTo('dashboard'); }
+  function showLoading(v){ document.getElementById('loader').style.display=v?'flex':'none'; }
+  window.showToast=(msg,err=false)=>{ const t=document.getElementById('toast'); t.textContent=msg; t.className='toast show'+(err?' error':''); setTimeout(()=>t.className='toast',3500); };
+
+  document.addEventListener('DOMContentLoaded',()=>{
+    document.getElementById('pass').addEventListener('keydown',e=>{ if(e.key==='Enter') window.doLogin(); });
+    document.querySelectorAll('.modal').forEach(m=>m.addEventListener('click',e=>{ if(e.target===m) m.classList.remove('open'); }));
+  });
   </script>
 
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+  :root{--verde:#00E676;--verde-esc:#00C853;--azul:#40C4FF;--fundo:#0A0E17;--card:#111827;--card2:#1A2235;--borda:#1E2D42;--tx1:#E8F4FD;--tx2:#8899AA;--red:#FF5252;--yellow:#FFD740;--r:16px;--font-d:'Syne',sans-serif;--font-m:'Space Mono',monospace;}
+  html,body{height:100%;background:var(--fundo);color:var(--tx1);font-family:var(--font-d);}
 
-    :root {
-      --verde:     #00E676;
-      --verde-esc: #00C853;
-      --azul:      #40C4FF;
-      --fundo:     #0A0E17;
-      --card:      #111827;
-      --card2:     #1A2235;
-      --borda:     #1E2D42;
-      --tx1:       #E8F4FD;
-      --tx2:       #8899AA;
-      --red:       #FF5252;
-      --yellow:    #FFD740;
-      --r:         16px;
-      --font-display: 'Syne', sans-serif;
-      --font-mono:    'Space Mono', monospace;
-    }
+  #loader{position:fixed;inset:0;z-index:999;background:rgba(10,14,23,.85);display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;}
+  .spinner{width:44px;height:44px;border:3px solid var(--borda);border-top-color:var(--verde);border-radius:50%;animation:spin .8s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(20px);}}
 
-    html, body { height: 100%; background: var(--fundo); color: var(--tx1); font-family: var(--font-display); }
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--card2);color:var(--tx1);border:1px solid var(--borda);padding:12px 24px;border-radius:50px;font-size:.85rem;transition:transform .35s,opacity .35s;opacity:0;z-index:9999;}
+  .toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+  .toast.error{border-color:var(--red);color:var(--red);}
 
-    /* ── loader ── */
-    #loader {
-      position: fixed; inset: 0; z-index: 999;
-      background: rgba(10,14,23,.85);
-      display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
-    }
-    .spinner {
-      width: 44px; height: 44px;
-      border: 3px solid var(--borda);
-      border-top-color: var(--verde);
-      border-radius: 50%;
-      animation: spin .8s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+  /* login */
+  #login-view{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse 80% 60% at 50% 0%,rgba(0,230,118,.08) 0%,transparent 70%);}
+  .login-box{width:min(420px,90vw);background:var(--card);border:1px solid var(--borda);border-radius:var(--r);padding:40px 36px;box-shadow:0 32px 64px rgba(0,0,0,.5);animation:fadeUp .5s ease;}
+  .login-logo{display:flex;align-items:center;gap:10px;margin-bottom:32px;}
+  .login-logo .bolt{font-size:2rem;filter:drop-shadow(0 0 12px var(--verde));}
+  .login-logo span{font-size:1.6rem;font-weight:800;letter-spacing:-1px;}
+  .ev{color:var(--verde);}
 
-    /* ── toast ── */
-    .toast {
-      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
-      background: var(--card2); color: var(--tx1); border: 1px solid var(--borda);
-      padding: 12px 24px; border-radius: 50px; font-size: .85rem;
-      transition: transform .35s ease, opacity .35s; opacity: 0; z-index: 9999;
-    }
-    .toast.show  { transform: translateX(-50%) translateY(0); opacity: 1; }
-    .toast.error { border-color: var(--red); color: var(--red); }
+  label{display:block;font-size:.78rem;color:var(--tx2);margin-bottom:5px;letter-spacing:.06em;text-transform:uppercase;}
+  input,select,textarea{width:100%;background:var(--card2);border:1px solid var(--borda);border-radius:10px;color:var(--tx1);padding:11px 14px;font-size:.92rem;font-family:inherit;margin-bottom:13px;transition:border-color .2s;}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--verde);}
+  select option{background:var(--card2);}
+  textarea{resize:vertical;min-height:60px;}
 
-    /* ── login ── */
-    #login-view {
-      min-height: 100vh; display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0,230,118,.08) 0%, transparent 70%);
-    }
-    .login-box {
-      width: min(420px,90vw);
-      background: var(--card); border: 1px solid var(--borda); border-radius: var(--r);
-      padding: 40px 36px;
-      box-shadow: 0 32px 64px rgba(0,0,0,.5);
-      animation: fadeUp .5s ease;
-    }
-    @keyframes fadeUp { from { opacity:0; transform: translateY(24px); } }
-    .login-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 32px; }
-    .login-logo .bolt { font-size: 2rem; filter: drop-shadow(0 0 12px var(--verde)); }
-    .login-logo span { font-size: 1.6rem; font-weight: 800; letter-spacing: -1px; }
-    .login-logo .ev  { color: var(--verde); }
+  .btn-primary{width:100%;padding:14px;background:var(--verde);color:var(--fundo);font-weight:800;font-family:inherit;font-size:1rem;border:none;border-radius:12px;cursor:pointer;transition:background .2s,transform .1s;letter-spacing:.02em;}
+  .btn-primary:hover{background:var(--verde-esc);}
+  .btn-primary:active{transform:scale(.98);}
+  .btn-primary:disabled{opacity:.5;cursor:not-allowed;}
+  .btn-google{width:100%;padding:12px;margin-bottom:4px;background:#fff;color:#3c4043;font-weight:600;font-family:inherit;font-size:.92rem;border:1px solid #dadce0;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:box-shadow .2s;}
+  .btn-google:hover{box-shadow:0 2px 12px rgba(0,0,0,.3);}
+  .btn-google:disabled{opacity:.6;cursor:not-allowed;}
+  .forgot-link{display:block;text-align:center;margin-top:12px;color:var(--tx2);font-size:.82rem;cursor:pointer;text-decoration:underline;}
+  .forgot-link:hover{color:var(--verde);}
+  .toggle-link{display:block;text-align:center;margin-top:6px;color:var(--verde);font-size:.85rem;cursor:pointer;font-weight:600;}
+  .toggle-link:hover{text-decoration:underline;}
+  .divider{display:flex;align-items:center;gap:12px;margin:13px 0;color:var(--tx2);font-size:.8rem;}
+  .divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--borda);}
 
-    label { display: block; font-size: .8rem; color: var(--tx2); margin-bottom: 6px; letter-spacing: .06em; text-transform: uppercase; }
-    input[type=email], input[type=password] {
-      width: 100%; background: var(--card2); border: 1px solid var(--borda); border-radius: 10px;
-      color: var(--tx1); padding: 12px 14px; font-size: .95rem; font-family: inherit;
-      margin-bottom: 16px; transition: border-color .2s;
-    }
-    input:focus { outline: none; border-color: var(--verde); }
+  /* app */
+  #app-view{min-height:100vh;flex-direction:column;display:none;}
+  .topbar{height:60px;background:var(--card);border-bottom:1px solid var(--borda);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:100;}
+  .topbar-brand{display:flex;align-items:center;gap:8px;font-size:1.1rem;font-weight:800;letter-spacing:-.5px;}
+  .topbar-right{display:flex;align-items:center;gap:12px;}
+  .topbar-email{font-size:.8rem;color:var(--tx2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .btn-ghost{background:transparent;border:1px solid var(--borda);color:var(--tx2);padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.82rem;font-family:inherit;transition:all .2s;white-space:nowrap;}
+  .btn-ghost:hover{border-color:var(--verde);color:var(--verde);}
+  .btn-action{background:var(--verde);border:none;color:var(--fundo);padding:7px 16px;border-radius:8px;cursor:pointer;font-size:.82rem;font-family:inherit;font-weight:700;transition:background .2s;white-space:nowrap;}
+  .btn-action:hover{background:var(--verde-esc);}
+  .btn-action.blue{background:var(--azul);}
+  .btn-action.blue:hover{background:#29b6f6;}
+  .btn-del{background:transparent;border:none;cursor:pointer;font-size:1rem;opacity:.45;transition:opacity .2s;padding:0 4px;}
+  .btn-del:hover{opacity:1;}
+  .btn-refresh{background:transparent;border:1px solid var(--borda);color:var(--tx2);width:34px;height:34px;border-radius:8px;cursor:pointer;font-size:1rem;display:grid;place-items:center;transition:all .2s;flex-shrink:0;}
+  .btn-refresh:hover{border-color:var(--verde);color:var(--verde);}
 
-    .btn-primary {
-      width: 100%; padding: 14px; background: var(--verde); color: var(--fundo);
-      font-weight: 800; font-family: inherit; font-size: 1rem; border: none;
-      border-radius: 12px; cursor: pointer; letter-spacing: .02em;
-      transition: background .2s, transform .1s;
-    }
-    .btn-primary:hover  { background: var(--verde-esc); }
-    .btn-primary:active { transform: scale(.98); }
-    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .nav-tabs{display:flex;gap:4px;padding:0 24px;background:var(--card);border-bottom:1px solid var(--borda);overflow-x:auto;scrollbar-width:none;}
+  .nav-tabs::-webkit-scrollbar{display:none;}
+  .tab-btn{padding:12px 18px;border:none;background:transparent;color:var(--tx2);font-family:inherit;font-size:.9rem;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .2s,border-color .2s;}
+  .tab-btn.active{color:var(--verde);border-bottom-color:var(--verde);}
 
-    .forgot-link {
-      display: block; text-align: center; margin-top: 14px;
-      color: var(--tx2); font-size: .82rem; cursor: pointer; text-decoration: underline;
-    }
-    .forgot-link:hover { color: var(--verde); }
+  .tab-panel{display:none;padding:24px;max-width:1280px;margin:0 auto;width:100%;}
+  .tab-panel.active{display:block;animation:fadeUp .3s ease;}
+  .sec-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px;}
+  .sec-title{font-size:1.25rem;font-weight:800;letter-spacing:-.5px;}
+  .sec-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
 
-    .toggle-link {
-      display: block; text-align: center; margin-top: 4px;
-      color: var(--verde); font-size: .85rem; cursor: pointer; font-weight: 600;
-    }
-    .toggle-link:hover { text-decoration: underline; }
+  .card{background:var(--card);border:1px solid var(--borda);border-radius:var(--r);padding:20px;}
+  .card-title{font-size:.78rem;font-weight:700;color:var(--tx2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;}
+  .veiculo-card{background:linear-gradient(135deg,var(--card2) 0%,rgba(0,230,118,.06) 100%);border:1px solid var(--borda);border-radius:var(--r);padding:20px 24px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
+  .veiculo-name{font-size:1.05rem;font-weight:700;}
+  .veiculo-specs{display:flex;gap:24px;}
+  .spec{text-align:center;}
+  .spec-val{font-size:1rem;font-weight:700;font-family:var(--font-m);color:var(--verde);}
+  .spec-lbl{font-size:.7rem;color:var(--tx2);text-transform:uppercase;letter-spacing:.06em;}
 
-    .btn-google {
-      width: 100%; padding: 13px; margin-bottom: 4px;
-      background: #fff; color: #3c4043;
-      font-weight: 600; font-family: inherit; font-size: .95rem;
-      border: 1px solid #dadce0; border-radius: 12px; cursor: pointer;
-      display: flex; align-items: center; justify-content: center; gap: 10px;
-      transition: box-shadow .2s, transform .1s;
-    }
-    .btn-google:hover  { box-shadow: 0 2px 12px rgba(0,0,0,.3); }
-    .btn-google:active { transform: scale(.98); }
-    .btn-google:disabled { opacity: .6; cursor: not-allowed; }
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:20px;}
+  .stat-card{background:var(--card);border:1px solid var(--borda);border-radius:var(--r);padding:16px;transition:border-color .2s,transform .2s;}
+  .stat-card:hover{border-color:var(--verde);transform:translateY(-2px);}
+  .stat-lbl{font-size:.7rem;color:var(--tx2);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}
+  .stat-val{font-size:1.25rem;font-weight:700;font-family:var(--font-m);}
+  .stat-card.accent .stat-val{color:var(--verde);}
+  .stat-card.blue .stat-val{color:var(--azul);}
+  .stat-card.yellow .stat-val{color:var(--yellow);}
 
-    .divider {
-      display: flex; align-items: center; gap: 12px;
-      margin: 16px 0; color: var(--tx2); font-size: .8rem;
-    }
-    .divider::before, .divider::after {
-      content: ''; flex: 1; height: 1px; background: var(--borda);
-    }
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px;}
+  @media(max-width:700px){.two-col{grid-template-columns:1fr;}}
+  .chart-wrap{height:180px;position:relative;}
 
-    /* ── app shell ── */
-    #app-view {
-      min-height: 100vh; flex-direction: column; display: none;
-    }
+  .list-item{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--borda);}
+  .list-item:last-child{border-bottom:none;}
+  .list-item-left{display:flex;align-items:center;gap:12px;}
+  .bolt-icon{width:34px;height:34px;background:rgba(0,230,118,.1);border-radius:10px;display:grid;place-items:center;font-size:1rem;flex-shrink:0;}
+  .list-title{font-size:.88rem;font-weight:600;}
+  .list-sub{font-size:.76rem;color:var(--tx2);margin-top:2px;}
+  .list-right{text-align:right;flex-shrink:0;}
+  .list-value{font-family:var(--font-m);font-size:.88rem;color:var(--verde);}
+  .list-cost{font-size:.76rem;color:var(--tx2);}
 
-    /* ── top bar ── */
-    .topbar {
-      height: 60px; background: var(--card); border-bottom: 1px solid var(--borda);
-      display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
-      position: sticky; top: 0; z-index: 100;
-    }
-    .topbar-brand { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; font-weight: 800; letter-spacing: -.5px; }
-    .topbar-brand .ev { color: var(--verde); }
-    .topbar-right { display: flex; align-items: center; gap: 16px; }
-    .topbar-email { font-size: .8rem; color: var(--tx2); }
-    .btn-ghost {
-      background: transparent; border: 1px solid var(--borda); color: var(--tx2);
-      padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: .82rem; font-family: inherit;
-      transition: all .2s;
-    }
-    .btn-ghost:hover { border-color: var(--verde); color: var(--verde); }
+  .comp-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;text-align:center;margin-top:16px;}
+  .comp-val{font-family:var(--font-m);font-size:1rem;font-weight:700;}
+  .comp-lbl{font-size:.7rem;color:var(--tx2);margin-top:4px;}
+  .comp-item.eco .comp-val{color:var(--verde);}
+  .comp-item.comb .comp-val{color:var(--red);}
 
-    /* ── nav tabs ── */
-    .nav-tabs {
-      display: flex; gap: 4px; padding: 0 24px;
-      background: var(--card); border-bottom: 1px solid var(--borda);
-      overflow-x: auto; scrollbar-width: none;
-    }
-    .nav-tabs::-webkit-scrollbar { display: none; }
-    .tab-btn {
-      padding: 12px 18px; border: none; background: transparent;
-      color: var(--tx2); font-family: inherit; font-size: .9rem; font-weight: 600;
-      cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap;
-      transition: color .2s, border-color .2s;
-    }
-    .tab-btn.active { color: var(--verde); border-bottom-color: var(--verde); }
+  /* filtros */
+  .filtros-bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;padding:16px;background:var(--card2);border-radius:12px;border:1px solid var(--borda);}
+  .filtros-bar .campo{display:flex;flex-direction:column;gap:4px;min-width:130px;flex:1;}
+  .filtros-bar label{margin-bottom:0;font-size:.7rem;}
+  .filtros-bar input{margin-bottom:0;}
+  .filtros-btns{display:flex;gap:8px;align-items:flex-end;}
 
-    /* ── panels ── */
-    .tab-panel { display: none; padding: 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
-    .tab-panel.active { display: block; animation: fadeUp .3s ease; }
+  /* table */
+  .table-wrap{overflow-x:auto;}
+  table{width:100%;border-collapse:collapse;font-size:.84rem;}
+  th{text-align:left;color:var(--tx2);font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;padding:10px 12px;border-bottom:1px solid var(--borda);font-weight:600;}
+  td{padding:11px 12px;border-bottom:1px solid rgba(30,45,66,.5);}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:rgba(0,230,118,.025);}
+  td.num{font-family:var(--font-m);text-align:right;}
+  th:not(:first-child):not(:nth-child(2)):not(:last-child){text-align:right;}
+  .badge{display:inline-block;padding:2px 10px;border-radius:50px;font-size:.7rem;font-weight:700;font-family:var(--font-m);}
+  .badge-green{background:rgba(0,230,118,.15);color:var(--verde);}
+  .badge-blue{background:rgba(64,196,255,.15);color:var(--azul);}
+  .empty{color:var(--tx2);font-size:.85rem;text-align:center;padding:24px;}
 
-    /* ── section header ── */
-    .sec-header {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 20px;
-    }
-    .sec-title { font-size: 1.25rem; font-weight: 800; letter-spacing: -.5px; }
+  /* modal */
+  .modal{display:none;position:fixed;inset:0;z-index:500;background:rgba(0,0,0,.72);align-items:center;justify-content:center;padding:16px;}
+  .modal.open{display:flex;animation:fadeUp .25s ease;}
+  .modal-box{background:var(--card);border:1px solid var(--borda);border-radius:var(--r);padding:28px;width:min(540px,100%);max-height:90vh;overflow-y:auto;}
+  .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+  .modal-title{font-size:1.05rem;font-weight:800;}
+  .btn-close{background:transparent;border:none;color:var(--tx2);font-size:1.5rem;cursor:pointer;line-height:1;padding:0 4px;}
+  .btn-close:hover{color:var(--tx1);}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  @media(max-width:480px){.form-row{grid-template-columns:1fr;}}
+  .form-group{display:flex;flex-direction:column;}
+  .form-group label{margin-bottom:5px;}
+  .form-group input,.form-group select,.form-group textarea{margin-bottom:0;}
+  .modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--borda);}
 
-    /* ── veiculo card ── */
-    .veiculo-card {
-      background: linear-gradient(135deg, var(--card2) 0%, rgba(0,230,118,.06) 100%);
-      border: 1px solid var(--borda); border-radius: var(--r);
-      padding: 20px 24px; margin-bottom: 20px;
-      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
-    }
-    .veiculo-name { font-size: 1.1rem; font-weight: 700; }
-    .veiculo-specs { display: flex; gap: 20px; }
-    .spec { text-align: center; }
-    .spec-val { font-size: 1rem; font-weight: 700; font-family: var(--font-mono); color: var(--verde); }
-    .spec-lbl { font-size: .72rem; color: var(--tx2); text-transform: uppercase; letter-spacing: .06em; }
-
-    /* ── stats grid ── */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 12px; margin-bottom: 20px;
-    }
-    .stat-card {
-      background: var(--card); border: 1px solid var(--borda); border-radius: var(--r);
-      padding: 18px 16px;
-      transition: border-color .2s, transform .2s;
-    }
-    .stat-card:hover { border-color: var(--verde); transform: translateY(-2px); }
-    .stat-lbl { font-size: .72rem; color: var(--tx2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
-    .stat-val { font-size: 1.35rem; font-weight: 700; font-family: var(--font-mono); color: var(--tx1); }
-    .stat-card.accent .stat-val { color: var(--verde); }
-    .stat-card.blue   .stat-val { color: var(--azul); }
-    .stat-card.yellow .stat-val { color: var(--yellow); }
-
-    /* ── two-col ── */
-    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
-    @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
-
-    /* ── card ── */
-    .card {
-      background: var(--card); border: 1px solid var(--borda); border-radius: var(--r);
-      padding: 20px;
-    }
-    .card-title { font-size: .9rem; font-weight: 700; color: var(--tx2); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 16px; }
-
-    /* ── list items ── */
-    .list-item {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 0; border-bottom: 1px solid var(--borda);
-    }
-    .list-item:last-child { border-bottom: none; }
-    .list-item-left { display: flex; align-items: center; gap: 12px; }
-    .bolt-icon { width: 36px; height: 36px; background: rgba(0,230,118,.1); border-radius: 10px;
-      display: grid; place-items: center; font-size: 1.1rem; }
-    .list-title { font-size: .9rem; font-weight: 600; }
-    .list-sub   { font-size: .78rem; color: var(--tx2); margin-top: 2px; }
-    .list-right { text-align: right; }
-    .list-value { font-family: var(--font-mono); font-size: .9rem; color: var(--verde); }
-    .list-cost  { font-size: .78rem; color: var(--tx2); }
-
-    /* ── gráfico barras ── */
-    #grafico-barras {
-      display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-bottom: 24px; position: relative;
-    }
-    .bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
-    .bar-label { font-size: .65rem; color: var(--tx2); font-family: var(--font-mono); }
-    .bar-outer { flex: 1; width: 100%; display: flex; align-items: flex-end; }
-    .bar-inner {
-      width: 100%; background: linear-gradient(to top, var(--verde), var(--azul));
-      border-radius: 4px 4px 0 0; min-height: 4px;
-      transition: height .6s ease;
-    }
-    .bar-date { font-size: .6rem; color: var(--tx2); white-space: nowrap; }
-
-    /* ── comparativo ── */
-    .comp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; text-align: center; }
-    .comp-item .comp-val { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; }
-    .comp-item .comp-lbl { font-size: .72rem; color: var(--tx2); margin-top: 4px; }
-    .comp-item.eco .comp-val { color: var(--verde); }
-    .comp-item.comb .comp-val { color: var(--red); }
-
-    /* ── table ── */
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-    th {
-      text-align: left; color: var(--tx2); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
-      padding: 10px 12px; border-bottom: 1px solid var(--borda); font-weight: 600;
-    }
-    td { padding: 12px; border-bottom: 1px solid rgba(30,45,66,.5); }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(0,230,118,.03); }
-    td.num { font-family: var(--font-mono); text-align: right; }
-    th:not(:first-child):not(:nth-child(2)) { text-align: right; }
-
-    .badge {
-      display: inline-block; padding: 2px 10px; border-radius: 50px;
-      font-size: .72rem; font-weight: 700; font-family: var(--font-mono);
-    }
-    .badge-green { background: rgba(0,230,118,.15); color: var(--verde); }
-    .badge-blue  { background: rgba(64,196,255,.15); color: var(--azul); }
-
-    .empty { color: var(--tx2); font-size: .85rem; text-align: center; padding: 24px; }
-
-    /* ── refresh btn ── */
-    .btn-refresh {
-      background: transparent; border: 1px solid var(--borda); color: var(--tx2);
-      width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 1rem;
-      display: grid; place-items: center; transition: all .2s;
-    }
-    .btn-refresh:hover { border-color: var(--verde); color: var(--verde); }
-
-    /* ── footer info ── */
-    .footer-note {
-      text-align: center; color: var(--tx2); font-size: .75rem;
-      padding: 24px; border-top: 1px solid var(--borda); margin-top: 8px;
-    }
-    .footer-note a { color: var(--verde); text-decoration: none; }
+  .footer-note{text-align:center;color:var(--tx2);font-size:.75rem;padding:24px;border-top:1px solid var(--borda);margin-top:8px;}
+  .footer-note a{color:var(--verde);text-decoration:none;}
   </style>
 </head>
 <body>
 
-<!-- ── loader ── -->
-<div id="loader">
-  <div class="spinner"></div>
-  <span style="color:var(--tx2);font-size:.85rem;">Carregando dados…</span>
-</div>
-
-<!-- ── toast ── -->
+<div id="loader"><div class="spinner"></div><span style="color:var(--tx2);font-size:.85rem;">Carregando…</span></div>
 <div id="toast" class="toast"></div>
+<input type="file" id="csv-input" accept=".csv" style="display:none" onchange="processarCSV(this)"/>
 
-<!-- ═══════════════════════════════════════════
-     LOGIN
-═════════════════════════════════════════════ -->
+<!-- LOGIN -->
 <div id="login-view">
   <div class="login-box">
-    <div class="login-logo">
-      <span class="bolt">⚡</span>
-      <span id="login-title">Meu <span class="ev">EV</span></span>
-    </div>
-
-    <!-- Google Sign-In (só no modo login) -->
+    <div class="login-logo"><span class="bolt">⚡</span><span id="login-title">Meu <span class="ev">EV</span></span></div>
     <div id="google-wrap">
       <button class="btn-google" id="google-btn" onclick="doGoogleLogin()">
         <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google
       </button>
       <div class="divider"><span>ou</span></div>
     </div>
-
     <label for="email">E-mail</label>
-    <input type="email" id="email" placeholder="seu@email.com" autocomplete="username" />
-
+    <input type="email" id="email" placeholder="seu@email.com" autocomplete="username"/>
     <label for="pass">Senha</label>
-    <input type="password" id="pass" placeholder="••••••••" autocomplete="current-password" />
-
-    <!-- Campo confirmação (só no cadastro) -->
+    <input type="password" id="pass" placeholder="••••••••" autocomplete="current-password"/>
     <div id="confirm-wrap" style="display:none">
       <label for="pass-confirm">Confirme a senha</label>
-      <input type="password" id="pass-confirm" placeholder="••••••••" />
+      <input type="password" id="pass-confirm" placeholder="••••••••"/>
     </div>
-
     <button class="btn-primary" id="login-btn" onclick="doLogin()">Entrar</button>
-
     <span id="forgot-link" class="forgot-link" onclick="doForgot()">Esqueci minha senha</span>
-
-    <div class="divider" style="margin-top:8px"><span>conta</span></div>
+    <div class="divider" style="margin-top:10px"><span>conta</span></div>
     <span id="toggle-modo" class="toggle-link" onclick="toggleModo()">Não tem conta? Cadastre-se</span>
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════
-     APP
-═════════════════════════════════════════════ -->
+<!-- APP -->
 <div id="app-view">
-
-  <!-- top bar -->
   <header class="topbar">
     <div class="topbar-brand">⚡ Meu <span class="ev">EV</span></div>
     <div class="topbar-right">
@@ -668,146 +567,100 @@
     </div>
   </header>
 
-  <!-- nav tabs -->
   <nav class="nav-tabs">
-    <button class="tab-btn active" data-tab="dashboard" onclick="navTo('dashboard')">📊 Dashboard</button>
-    <button class="tab-btn" data-tab="historico"  onclick="navTo('historico')">⚡ Recargas</button>
-    <button class="tab-btn" data-tab="manutencao" onclick="navTo('manutencao')">🔧 Manutenções</button>
+    <button class="tab-btn active" data-tab="dashboard"  onclick="navTo('dashboard')">📊 Dashboard</button>
+    <button class="tab-btn"        data-tab="historico"  onclick="navTo('historico')">⚡ Recargas</button>
+    <button class="tab-btn"        data-tab="manutencao" onclick="navTo('manutencao')">🔧 Manutenções</button>
   </nav>
 
-  <!-- ─── DASHBOARD ────────────────────────────────── -->
+  <!-- DASHBOARD -->
   <div id="panel-dashboard" class="tab-panel active">
-
     <div class="sec-header">
       <span class="sec-title">Visão Geral</span>
-      <button class="btn-refresh" onclick="doRefresh()" title="Atualizar">↺</button>
+      <button class="btn-refresh" onclick="doRefresh()">↺</button>
     </div>
-
-    <!-- Veículo -->
     <div class="veiculo-card">
       <div>
-        <div style="font-size:.72rem;color:var(--tx2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Veículo</div>
+        <div style="font-size:.7rem;color:var(--tx2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Veículo</div>
         <div class="veiculo-name" id="veiculo-nome">—</div>
       </div>
       <div class="veiculo-specs">
-        <div class="spec">
-          <div class="spec-val" id="veiculo-bat">—</div>
-          <div class="spec-lbl">Bateria</div>
-        </div>
-        <div class="spec">
-          <div class="spec-val" id="veiculo-aut">—</div>
-          <div class="spec-lbl">Autonomia PBEV</div>
-        </div>
+        <div class="spec"><div class="spec-val" id="veiculo-bat">—</div><div class="spec-lbl">Bateria</div></div>
+        <div class="spec"><div class="spec-val" id="veiculo-aut">—</div><div class="spec-lbl">Autonomia PBEV</div></div>
       </div>
     </div>
-
-    <!-- Stats grid -->
     <div class="stats-grid">
-      <div class="stat-card accent">
-        <div class="stat-lbl">Total kWh</div>
-        <div class="stat-val" id="stat-kwh">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-lbl">Km percorridos</div>
-        <div class="stat-val" id="stat-km">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-lbl">Gasto total</div>
-        <div class="stat-val" id="stat-custo">—</div>
-      </div>
-      <div class="stat-card blue">
-        <div class="stat-lbl">Consumo médio</div>
-        <div class="stat-val" id="stat-consumo">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-lbl">Custo / km</div>
-        <div class="stat-val" id="stat-custoKm">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-lbl">Custo / kWh</div>
-        <div class="stat-val" id="stat-custoKwh">—</div>
-      </div>
-      <div class="stat-card yellow">
-        <div class="stat-lbl">Manutenções</div>
-        <div class="stat-val" id="stat-manut">—</div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-lbl">Nº recargas</div>
-        <div class="stat-val" id="stat-recargas">—</div>
-      </div>
+      <div class="stat-card accent"><div class="stat-lbl">Total kWh</div><div class="stat-val" id="stat-kwh">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Km percorridos</div><div class="stat-val" id="stat-km">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Gasto total</div><div class="stat-val" id="stat-custo">—</div></div>
+      <div class="stat-card blue"><div class="stat-lbl">Consumo médio</div><div class="stat-val" id="stat-consumo">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Custo / km</div><div class="stat-val" id="stat-custoKm">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Custo / kWh</div><div class="stat-val" id="stat-custoKwh">—</div></div>
+      <div class="stat-card yellow"><div class="stat-lbl">Manutenções</div><div class="stat-val" id="stat-manut">—</div></div>
+      <div class="stat-card"><div class="stat-lbl">Nº recargas</div><div class="stat-val" id="stat-recargas">—</div></div>
     </div>
-
-    <!-- Chart + últimas recargas -->
     <div class="two-col">
-      <div class="card">
-        <div class="card-title">kWh por recarga (últimas 10)</div>
-        <div id="grafico-barras"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Últimas recargas</div>
-        <div id="ultimas-recargas"></div>
-      </div>
+      <div class="card"><div class="card-title">Evolução do consumo (km/kWh)</div><div class="chart-wrap"><canvas id="chart-consumo"></canvas></div></div>
+      <div class="card"><div class="card-title">Gastos mensais com recarga</div><div class="chart-wrap"><canvas id="chart-gastos"></canvas></div></div>
     </div>
-
-    <!-- Comparativo combustível -->
-    <div class="card" style="margin-bottom:24px">
-      <div class="card-title">Comparativo vs Combustível</div>
-      <div class="comp-grid">
-        <div class="comp-item comb">
-          <div class="comp-val" id="comb-gasto">—</div>
-          <div class="comp-lbl">Se usasse gasolina</div>
-        </div>
-        <div class="comp-item">
-          <div class="comp-val" id="comb-ev">—</div>
-          <div class="comp-lbl">Com elétrico</div>
-        </div>
-        <div class="comp-item eco">
-          <div class="comp-val" id="comb-eco">—</div>
-          <div class="comp-lbl">💚 Economia</div>
+    <div class="two-col">
+      <div class="card"><div class="card-title">Últimas recargas</div><div id="ultimas-recargas"></div></div>
+      <div class="card">
+        <div class="card-title">Comparativo vs Combustível</div>
+        <div class="comp-grid">
+          <div class="comp-item comb"><div class="comp-val" id="comb-gasto">—</div><div class="comp-lbl">Se usasse gasolina</div></div>
+          <div class="comp-item"><div class="comp-val" id="comb-ev">—</div><div class="comp-lbl">Com elétrico</div></div>
+          <div class="comp-item eco"><div class="comp-val" id="comb-eco">—</div><div class="comp-lbl">💚 Economia</div></div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- ─── HISTÓRICO RECARGAS ──────────────────────── -->
+  <!-- RECARGAS -->
   <div id="panel-historico" class="tab-panel">
     <div class="sec-header">
-      <span class="sec-title">Histórico de Recargas</span>
-      <button class="btn-refresh" onclick="doRefresh()" title="Atualizar">↺</button>
+      <span class="sec-title">Recargas</span>
+      <div class="sec-actions">
+        <button class="btn-action" onclick="abrirModalRecarga()">+ Nova recarga</button>
+        <button class="btn-action blue" onclick="exportarRecargasCSV()">↓ Exportar CSV</button>
+        <button class="btn-ghost" onclick="importarCSV()">↑ Importar CSV</button>
+        <button class="btn-refresh" onclick="doRefresh()">↺</button>
+      </div>
+    </div>
+    <div class="filtros-bar">
+      <div class="campo"><label>Local</label><input type="text" id="f-local" placeholder="filtrar por local…"/></div>
+      <div class="campo"><label>Data início</label><input type="date" id="f-data-ini"/></div>
+      <div class="campo"><label>Data fim</label><input type="date" id="f-data-fim"/></div>
+      <div class="filtros-btns">
+        <button class="btn-action" onclick="aplicarFiltros()">Filtrar</button>
+        <button class="btn-ghost" onclick="limparFiltros()">Limpar</button>
+      </div>
     </div>
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr>
-              <th>Data</th><th>Local</th><th>kWh</th><th>Km</th><th>Consumo</th><th>Custo</th><th>Tipo</th>
-            </tr>
-          </thead>
-          <tbody id="hist-tbody">
-            <tr><td colspan="7" class="empty">Carregando…</td></tr>
-          </tbody>
+          <thead><tr><th>Data</th><th>Local</th><th>kWh</th><th>Km</th><th>Consumo</th><th>Custo</th><th>Tipo</th><th></th></tr></thead>
+          <tbody id="hist-tbody"><tr><td colspan="8" class="empty">Carregando…</td></tr></tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <!-- ─── MANUTENÇÕES ──────────────────────────────── -->
+  <!-- MANUTENÇÕES -->
   <div id="panel-manutencao" class="tab-panel">
     <div class="sec-header">
       <span class="sec-title">Manutenções</span>
-      <button class="btn-refresh" onclick="doRefresh()" title="Atualizar">↺</button>
+      <div class="sec-actions">
+        <button class="btn-action" onclick="abrirModalManutencao()">+ Nova manutenção</button>
+        <button class="btn-action blue" onclick="exportarManutencoesCSV()">↓ Exportar CSV</button>
+        <button class="btn-refresh" onclick="doRefresh()">↺</button>
+      </div>
     </div>
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr>
-              <th>Data</th><th>Tipo</th><th>Descrição</th><th>Odômetro</th><th>Custo</th>
-            </tr>
-          </thead>
-          <tbody id="manut-tbody">
-            <tr><td colspan="5" class="empty">Carregando…</td></tr>
-          </tbody>
+          <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Fornecedor</th><th>Odômetro</th><th>Custo</th><th></th></tr></thead>
+          <tbody id="manut-tbody"><tr><td colspan="7" class="empty">Carregando…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -816,6 +669,64 @@
   <footer class="footer-note">
     Meu EV Web · dados sincronizados com o app Android · <a href="https://julianoheerdt.github.io/meuev-app/" target="_blank">GitHub Pages</a>
   </footer>
+</div>
+
+<!-- MODAL NOVA RECARGA -->
+<div id="modal-recarga" class="modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">⚡ Nova Recarga</span>
+      <button class="btn-close" onclick="fecharModalRecarga()">×</button>
+    </div>
+    <form id="form-recarga" onsubmit="return false">
+      <div class="form-row">
+        <div class="form-group"><label>Data e hora *</label><input type="datetime-local" id="rec-data"/></div>
+        <div class="form-group"><label>Tipo *</label>
+          <select id="rec-tipo"><option value="AC">AC (corrente alternada)</option><option value="DC">DC (corrente contínua)</option></select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>Odômetro início (km) *</label><input type="number" id="rec-od-ini" placeholder="ex: 12500" step="0.1"/></div>
+        <div class="form-group"><label>Odômetro fim (km) *</label><input type="number" id="rec-od-fim" placeholder="ex: 12800" step="0.1"/></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label>kWh carregados *</label><input type="number" id="rec-kwh" placeholder="ex: 20.5" step="0.01"/></div>
+        <div class="form-group"><label>Custo total (R$) *</label><input type="number" id="rec-custo" placeholder="ex: 18.00" step="0.01"/></div>
+      </div>
+      <div class="form-group" style="margin-top:4px"><label>Local</label><input type="text" id="rec-local" placeholder="ex: Shopping, Casa, Eletroposto…"/></div>
+      <div class="form-group"><label>Observação</label><textarea id="rec-obs" placeholder="Observações opcionais…"></textarea></div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="fecharModalRecarga()">Cancelar</button>
+        <button class="btn-action" onclick="salvarRecarga()">Salvar recarga</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL NOVA MANUTENÇÃO -->
+<div id="modal-manutencao" class="modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title">🔧 Nova Manutenção</span>
+      <button class="btn-close" onclick="fecharModalManutencao()">×</button>
+    </div>
+    <form id="form-manutencao" onsubmit="return false">
+      <div class="form-row">
+        <div class="form-group"><label>Data *</label><input type="date" id="man-data"/></div>
+        <div class="form-group"><label>Tipo *</label><input type="text" id="man-tipo" placeholder="ex: Revisão, Pneus…"/></div>
+      </div>
+      <div class="form-group" style="margin-top:4px"><label>Descrição *</label><input type="text" id="man-desc" placeholder="Descreva o serviço realizado"/></div>
+      <div class="form-row">
+        <div class="form-group"><label>Odômetro (km) *</label><input type="number" id="man-od" placeholder="ex: 15000" step="0.1"/></div>
+        <div class="form-group"><label>Custo (R$) *</label><input type="number" id="man-custo" placeholder="ex: 250.00" step="0.01"/></div>
+      </div>
+      <div class="form-group"><label>Fornecedor / Oficina</label><input type="text" id="man-forn" placeholder="ex: Concessionária BYD"/></div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="fecharModalManutencao()">Cancelar</button>
+        <button class="btn-action" onclick="salvarManutencao()">Salvar manutenção</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 </body>
