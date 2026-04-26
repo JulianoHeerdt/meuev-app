@@ -17,7 +17,7 @@
            createUserWithEmailAndPassword }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   import { getFirestore, collection, doc, getDocs, getDoc, setDoc,
-           deleteDoc, orderBy, query }
+           deleteDoc, orderBy, query, onSnapshot }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
   const app  = initializeApp({
@@ -88,7 +88,7 @@
     catch(e){ showToast('E-mail ou senha incorretos.',true); btn.disabled=false; btn.textContent='Entrar'; }
   };
 
-  window.doLogout = () => signOut(auth);
+  window.doLogout = () => { cancelarListeners(); signOut(auth); };
   window.doForgot = async () => {
     const email=document.getElementById('email').value.trim();
     if(!email){showToast('Digite seu e-mail primeiro.',true);return;}
@@ -97,47 +97,142 @@
   };
 
   // ── Dados ─────────────────────────────────────────────────────────
-  async function carregarTudo(){
+  // Referências dos listeners para cancelar ao fazer logout
+  let unsubRecargas=null, unsubManutencoes=null, unsubConfig=null;
+
+  function cancelarListeners(){
+    if(unsubRecargas)   { unsubRecargas();   unsubRecargas=null;   }
+    if(unsubManutencoes){ unsubManutencoes(); unsubManutencoes=null; }
+    if(unsubConfig)     { unsubConfig();      unsubConfig=null;     }
+  }
+
+  function iniciarListeners(){
+    cancelarListeners();
+    const u=uid(); if(!u) return;
     showLoading(true);
-    try{
-      const userDoc=await getDoc(doc(db,'usuarios',uid()));
-      CONFIG=userDoc.exists()&&userDoc.data().configuracao?userDoc.data().configuracao:null;
-      const [rSnap,mSnap]=await Promise.all([
-        getDocs(query(collection(db,'usuarios',uid(),'recargas'),orderBy('data','desc'))),
-        getDocs(query(collection(db,'usuarios',uid(),'manutencoes'),orderBy('data','desc')))
-      ]);
-      RECARGAS   =rSnap.docs.map(d=>({...d.data(),id:d.id}));
-      MANUTENCOES=mSnap.docs.map(d=>({...d.data(),id:d.id}));
+
+    // Flags para saber quando ambos já carregaram pela primeira vez
+    let recOk=false, manutOk=false;
+    const tentarOcultar=()=>{ if(recOk&&manutOk) showLoading(false); };
+
+    // ── Config (documento do usuário) ──
+    unsubConfig=onSnapshot(doc(db,'usuarios',u), snap=>{
+      CONFIG=snap.exists()&&snap.data().configuracao?snap.data().configuracao:null;
       preencherConfigForm();
       renderAll();
-    }catch(e){ showToast('Erro ao carregar: '+e.message,true); console.error(e); }
-    finally{ showLoading(false); }
+    }, e=>console.error('Config listener:',e));
+
+    // ── Recargas ──
+    unsubRecargas=onSnapshot(
+      query(collection(db,'usuarios',u,'recargas'),orderBy('data','desc')),
+      snap=>{
+        RECARGAS=snap.docs.map(d=>({...d.data(),id:d.id}));
+        recOk=true; tentarOcultar();
+        renderAll();
+      },
+      e=>{ showToast('Erro ao sincronizar recargas.',true); console.error(e); showLoading(false); }
+    );
+
+    // ── Manutenções ──
+    unsubManutencoes=onSnapshot(
+      query(collection(db,'usuarios',u,'manutencoes'),orderBy('data','desc')),
+      snap=>{
+        MANUTENCOES=snap.docs.map(d=>({...d.data(),id:d.id}));
+        manutOk=true; tentarOcultar();
+        renderAll();
+      },
+      e=>{ showToast('Erro ao sincronizar manutenções.',true); console.error(e); showLoading(false); }
+    );
   }
+
+  async function carregarTudo(){ iniciarListeners(); }
 
   function renderAll(){
     renderDashboard(); renderHistorico(); renderManutencoes();
     renderGraficoConsumo(); renderGraficoGastos();
   }
-  window.doRefresh = () => carregarTudo();
+  window.doRefresh = () => showToast('Sincronização em tempo real ativa — dados sempre atualizados! ✅');
 
   // ── Cálculo de consumo real (delta SOC entre sessões) ─────────────
-  function calcConsumoReal(recargas){
-    // Para cada recarga, tenta usar o delta de SOC entre o fim da anterior e o início da atual
-    const sorted=[...recargas].sort((a,b)=>a.data.localeCompare(b.data));
+  // ── UEPS — idêntico ao algoritmo do app Flutter ──────────────────
+  // Calcula consumo real e custo por viagem com estoque compartilhado de kWh
+  function calcUEPS(recargas){
+    if(!recargas.length) return {};
+
+    // Processa da mais antiga para a mais recente (app usa .reversed)
+    const emOrdem=[...recargas].sort((a,b)=>a.data.localeCompare(b.data));
+
+    // Estoque inicial: kWh disponível por recarga
+    const estoque={};
+    emOrdem.forEach(r=>{ if(r.id) estoque[r.id]=r.kwh||0; });
+
     const resultado={};
-    for(let i=0;i<sorted.length;i++){
-      const r=sorted[i];
-      const anterior=i>0?sorted[i-1]:null;
-      const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
-      let consumo=0;
-      if(anterior&&anterior.bateria_fim_percent!=null&&r.bateria_inicio_percent!=null&&km>0){
-        const kwConsumidos=((anterior.bateria_fim_percent/100)-(r.bateria_inicio_percent/100))*capBat();
-        consumo=kwConsumidos>0?km/kwConsumidos:0;
+
+    for(let i=0;i<emOrdem.length;i++){
+      const viagem=emOrdem[i];
+      if(!viagem.id) continue;
+
+      const anterior=i>0?emOrdem[i-1]:null;
+      const socAnteriorFim=anterior?.bateria_fim_percent??null;
+      const socAtual=viagem.bateria_inicio_percent??null;
+      const km=(viagem.odometro_fim||0)-(viagem.odometro_inicio||0);
+
+      // Sem dados de SOC: retorna vazio (sem fallback — igual ao app)
+      if(socAnteriorFim==null||socAtual==null){
+        resultado[viagem.id]={km,kwConsumidos:0,custoTotal:0,custoMedioKwh:0,custoPorKm:0,consumo:0,incompleto:false,semDados:true};
+        continue;
       }
-      if(consumo===0&&r.kwh>0&&km>0) consumo=km/r.kwh;
-      resultado[r.id]={km,consumo,kwh:r.kwh};
+
+      const delta=socAnteriorFim-socAtual;
+      if(delta<=0){
+        resultado[viagem.id]={km,kwConsumidos:0,custoTotal:0,custoMedioKwh:0,custoPorKm:0,consumo:0,incompleto:false,semDados:false};
+        continue;
+      }
+
+      const kwNecessarios=delta/100*capBat();
+      let kwRestante=kwNecessarios;
+      let custoTotal=0;
+
+      // Consome do estoque das recargas anteriores (UEPS = mais antigo primeiro)
+      for(let j=0;j<i&&kwRestante>0.001;j++){
+        const carga=emOrdem[j];
+        if(!carga.id) continue;
+        const kwDisponivel=estoque[carga.id]||0;
+        if(kwDisponivel<=0.001) continue;
+        const custoPorKwh=(carga.custo_total||0)>0&&(carga.kwh||0)>0?carga.custo_total/carga.kwh:0;
+        if(custoPorKwh<=0) continue;
+        const kwUsado=Math.min(kwRestante,kwDisponivel);
+        custoTotal+=kwUsado*custoPorKwh;
+        kwRestante-=kwUsado;
+        estoque[carga.id]=kwDisponivel-kwUsado;
+      }
+
+      const kwUsado=kwNecessarios-kwRestante;
+      const incompleto=kwRestante>0.001;
+      const custoMedioKwh=kwUsado>0?custoTotal/kwUsado:0;
+      const custoPorKm=km>0?custoTotal/km:0;
+      const consumo=kwNecessarios>0&&km>0?km/kwNecessarios:0;
+
+      resultado[viagem.id]={km,kwConsumidos:kwNecessarios,custoTotal,custoMedioKwh,custoPorKm,consumo,incompleto,semDados:false};
     }
     return resultado;
+  }
+
+  // Mantém alias para compatibilidade com chamadas existentes
+  function calcConsumoReal(recargas){
+    const ueps=calcUEPS(recargas);
+    // Para recargas sem dados de SOC, usa fallback km/kwh carregados
+    const sorted=[...recargas].sort((a,b)=>a.data.localeCompare(b.data));
+    sorted.forEach(r=>{
+      if(!r.id) return;
+      const u=ueps[r.id];
+      if(u&&u.semDados){
+        const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
+        const consumo=(km>0&&r.kwh>0)?km/r.kwh:0;
+        ueps[r.id]={...u,km,consumo,kwConsumidos:r.kwh,custoPorKm:(r.custo_total||0)>0&&km>0?r.custo_total/km:0,custoMedioKwh:(r.custo_total||0)>0&&r.kwh>0?r.custo_total/r.kwh:0,custoTotal:r.custo_total||0};
+      }
+    });
+    return ueps;
   }
 
   // ── Stats ─────────────────────────────────────────────────────────
@@ -291,11 +386,13 @@
     const consumoMap=calcConsumoReal(RECARGAS);
     const lista=recargasFiltradas();
     const tbody=document.getElementById('hist-tbody'); tbody.innerHTML='';
-    if(!lista.length){ tbody.innerHTML='<tr><td colspan="10" class="empty">Nenhuma recarga encontrada.</td></tr>'; return; }
+    if(!lista.length){ tbody.innerHTML='<tr><td colspan="11" class="empty">Nenhuma recarga encontrada.</td></tr>'; return; }
     lista.forEach(r=>{
       const cm=consumoMap[r.id]||{};
       const km=cm.km||0;
       const tipoBadge=r.tipo_recarga==='DC Rápido'?'badge-blue':r.tipo_recarga==='Casa'?'badge-green':'badge-yellow';
+      const custoKm=cm.custoPorKm>0?fmtBRL(cm.custoPorKm)+'/km':'--';
+      const incTag=cm.incompleto?'<span title="Estoque insuficiente para cobrir toda a viagem" style="color:var(--yellow);font-size:.7rem"> ⚠</span>':'';
       tbody.insertAdjacentHTML('beforeend',`<tr>
         <td>${fmtDate(r.data)}</td>
         <td>${r.local||'--'}</td>
@@ -305,6 +402,7 @@
         <td class="num">${fmtNum(km,0,' km')}</td>
         <td class="num">${fmtConsumo(cm.consumo)}</td>
         <td class="num">${fmtBRL(r.custo_total)}</td>
+        <td class="num">${custoKm}${incTag}</td>
         <td><span class="badge ${tipoBadge}">${r.tipo_recarga||'--'}</span></td>
         <td class="acoes-td">
           <button class="btn-edit" onclick="editarRecarga('${r.id}')">✏️</button>
@@ -556,7 +654,6 @@
         ok++;
       }catch(e){ erros++; }
     }
-    await carregarTudo();
     showToast(`Importadas: ${ok} recargas${erros?`, ${erros} erros`:''}.`);
     input.value='';
   };
@@ -621,13 +718,15 @@
     const consumoMap=calcConsumoReal(RECARGAS);
     pdf.autoTable({
       startY:y, margin:{left:pad,right:pad},
-      head:[['Data','Local','Bat.Ini','Bat.Fim','kWh','Km','Consumo','Custo','Tipo']],
+      head:[['Data','Local','Bat.Ini','Bat.Fim','kWh','Km','Consumo','Custo','Custo/km UEPS','Tipo']],
       body:RECARGAS.map(r=>{ const cm=consumoMap[r.id]||{}; return [
         fmtDate(r.data), r.local||'--',
         r.bateria_inicio_percent!=null?r.bateria_inicio_percent+'%':'--',
         r.bateria_fim_percent!=null?r.bateria_fim_percent+'%':'--',
         fmtNum(r.kwh,2), fmtNum(cm.km||0,0),
-        fmtConsumo(cm.consumo), fmtBRL(r.custo_total), r.tipo_recarga||'--'
+        fmtConsumo(cm.consumo), fmtBRL(r.custo_total),
+        cm.custoPorKm>0?fmtBRL(cm.custoPorKm)+'/km':'--',
+        r.tipo_recarga||'--'
       ]; }),
       styles:{fontSize:7,cellPadding:2,textColor:[...preto],fillColor:[255,255,255]},
       headStyles:{fillColor:[...verdeImp],textColor:[255,255,255],fontStyle:'bold'},
@@ -1036,8 +1135,8 @@
     <div class="card">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Data</th><th>Local</th><th>Bat.Ini</th><th>Bat.Fim</th><th>kWh</th><th>Km</th><th>Consumo</th><th>Custo</th><th>Tipo</th><th></th></tr></thead>
-          <tbody id="hist-tbody"><tr><td colspan="10" class="empty">Carregando…</td></tr></tbody>
+          <thead><tr><th>Data</th><th>Local</th><th>Bat.Ini</th><th>Bat.Fim</th><th>kWh</th><th>Km</th><th>Consumo</th><th>Custo recarga</th><th>Custo/km (UEPS)</th><th>Tipo</th><th></th></tr></thead>
+          <tbody id="hist-tbody"><tr><td colspan="11" class="empty">Carregando…</td></tr></tbody>
         </table>
       </div>
     </div>
