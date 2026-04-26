@@ -10,7 +10,8 @@
   <!-- Firebase SDKs -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail }
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
+             sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import { getFirestore, collection, doc, getDocs, getDoc, orderBy, query }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -25,9 +26,10 @@
       appId: "1:754930549464:web:1ff7a2ca812fa836088dad"
     };
 
-    const app  = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db   = getFirestore(app);
+    const app      = initializeApp(firebaseConfig);
+    const auth     = getAuth(app);
+    const db       = getFirestore(app);
+    const provider = new GoogleAuthProvider();
 
     // ── helpers ─────────────────────────────────────────────────────
     const fmtBRL = v => v != null ? new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v) : '--';
@@ -217,6 +219,19 @@
     };
 
     // ── Auth actions ─────────────────────────────────────────────────
+    window.doGoogleLogin = async function() {
+      const btn = document.getElementById('google-btn');
+      btn.disabled = true;
+      btn.textContent = 'Aguarde…';
+      try {
+        await signInWithPopup(auth, provider);
+      } catch(e) {
+        showToast('Erro Google: ' + e.message, true);
+        btn.disabled = false;
+        btn.innerHTML = '<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google';
+      }
+    };
+
     window.doLogin = async function() {
       const email = document.getElementById('email').value.trim();
       const pass  = document.getElementById('pass').value;
@@ -368,6 +383,26 @@
       color: var(--tx2); font-size: .82rem; cursor: pointer; text-decoration: underline;
     }
     .forgot-link:hover { color: var(--verde); }
+
+    .btn-google {
+      width: 100%; padding: 13px; margin-bottom: 4px;
+      background: #fff; color: #3c4043;
+      font-weight: 600; font-family: inherit; font-size: .95rem;
+      border: 1px solid #dadce0; border-radius: 12px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      transition: box-shadow .2s, transform .1s;
+    }
+    .btn-google:hover  { box-shadow: 0 2px 12px rgba(0,0,0,.3); }
+    .btn-google:active { transform: scale(.98); }
+    .btn-google:disabled { opacity: .6; cursor: not-allowed; }
+
+    .divider {
+      display: flex; align-items: center; gap: 12px;
+      margin: 16px 0; color: var(--tx2); font-size: .8rem;
+    }
+    .divider::before, .divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--borda);
+    }
 
     /* ── app shell ── */
     #app-view {
@@ -553,6 +588,14 @@
       <span class="bolt">⚡</span>
       <span>Meu <span class="ev">EV</span></span>
     </div>
+
+    <!-- Google Sign-In -->
+    <button class="btn-google" id="google-btn" onclick="doGoogleLogin()">
+      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google
+    </button>
+
+    <div class="divider"><span>ou</span></div>
+
     <label for="email">E-mail</label>
     <input type="email" id="email" placeholder="seu@email.com" autocomplete="username" />
     <label for="pass">Senha</label>
