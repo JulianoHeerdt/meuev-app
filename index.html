@@ -293,6 +293,7 @@
     lista.forEach(r=>{
       const cm=consumoMap[r.id]||{};
       const km=cm.km||0;
+      const tipoBadge=r.tipo_recarga==='DC Rápido'?'badge-blue':r.tipo_recarga==='Casa'?'badge-green':'badge-yellow';
       tbody.insertAdjacentHTML('beforeend',`<tr>
         <td>${fmtDate(r.data)}</td>
         <td>${r.local||'--'}</td>
@@ -302,8 +303,11 @@
         <td class="num">${fmtNum(km,0,' km')}</td>
         <td class="num">${fmtConsumo(cm.consumo)}</td>
         <td class="num">${fmtBRL(r.custo_total)}</td>
-        <td><span class="badge ${r.tipo_recarga==='DC Rápido'?'badge-blue':r.tipo_recarga==='Casa'?'badge-green':'badge-yellow'}">${r.tipo_recarga||'--'}</span></td>
-        <td><button class="btn-del" onclick="deletarRecarga('${r.id}')">🗑</button></td>
+        <td><span class="badge ${tipoBadge}">${r.tipo_recarga||'--'}</span></td>
+        <td class="acoes-td">
+          <button class="btn-edit" onclick="editarRecarga('${r.id}')">✏️</button>
+          <button class="btn-del"  onclick="deletarRecarga('${r.id}')">🗑</button>
+        </td>
       </tr>`);
     });
   }
@@ -320,19 +324,46 @@
         <td>${m.fornecedor||'--'}</td>
         <td class="num">${fmtNum(m.odometro,0,' km')}</td>
         <td class="num">${fmtBRL(m.custo)}</td>
-        <td><button class="btn-del" onclick="deletarManutencao('${m.id}')">🗑</button></td>
+        <td class="acoes-td">
+          <button class="btn-edit" onclick="editarManutencao('${m.id}')">✏️</button>
+          <button class="btn-del"  onclick="deletarManutencao('${m.id}')">🗑</button>
+        </td>
       </tr>`);
     });
   }
 
   // ── Modal Recarga ─────────────────────────────────────────────────
+  let editandoRecargaId = null;
+
   window.abrirModalRecarga = () => {
+    editandoRecargaId = null;
     document.getElementById('form-recarga').reset();
     document.getElementById('rec-data').value=new Date().toISOString().slice(0,16);
     if(RECARGAS.length) document.getElementById('rec-od-ini').value=RECARGAS[0].odometro_fim||'';
+    document.getElementById('modal-recarga-title').textContent='⚡ Nova Recarga';
     document.getElementById('modal-recarga').classList.add('open');
   };
-  window.fecharModalRecarga = () => document.getElementById('modal-recarga').classList.remove('open');
+
+  window.editarRecarga = (id) => {
+    const r=RECARGAS.find(x=>x.id===id); if(!r) return;
+    editandoRecargaId=id;
+    document.getElementById('form-recarga').reset();
+    const toLocal=s=>{ if(!s) return ''; const d=new Date(s); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,16); };
+    document.getElementById('rec-data').value         = toLocal(r.data);
+    document.getElementById('rec-tipo').value         = r.tipo_recarga||'Casa';
+    document.getElementById('rec-od-ini').value       = r.odometro_inicio||'';
+    document.getElementById('rec-od-fim').value       = r.odometro_fim||'';
+    document.getElementById('rec-bat-ini').value      = r.bateria_inicio_percent??'';
+    document.getElementById('rec-bat-fim').value      = r.bateria_fim_percent??'';
+    document.getElementById('rec-kwh').value          = r.kwh||'';
+    document.getElementById('rec-custo').value        = r.custo_total||'';
+    document.getElementById('rec-local').value        = r.local||'';
+    document.getElementById('rec-obs').value          = r.observacao||'';
+    document.getElementById('modal-recarga-title').textContent='✏️ Editar Recarga';
+    document.getElementById('modal-recarga').classList.add('open');
+  };
+
+  window.fecharModalRecarga = () => { document.getElementById('modal-recarga').classList.remove('open'); editandoRecargaId=null; };
 
   function recalcularCamposRecarga(){
     const batIni=parseFloat(document.getElementById('rec-bat-ini').value);
@@ -340,24 +371,15 @@
     const tipo   =document.getElementById('rec-tipo').value;
     const kwhField =document.getElementById('rec-kwh');
     const custoField=document.getElementById('rec-custo');
-
-    // Calcula kWh pelo delta de bateria
     if(!isNaN(batIni)&&!isNaN(batFim)&&batFim>batIni){
-      const kwh=((batFim-batIni)/100)*capBat();
-      kwhField.value=kwh.toFixed(2);
+      kwhField.value=((batFim-batIni)/100*capBat()).toFixed(2);
     }
-
-    // Calcula custo se tipo Casa
     if(tipo==='Casa'){
       const kwh=parseFloat(kwhField.value);
-      const precoKwh=CONFIG?.custo_por_kwh_casa||0;
-      if(!isNaN(kwh)&&precoKwh>0){
-        custoField.value=(kwh*precoKwh).toFixed(2);
-      }
+      const preco=CONFIG?.custo_por_kwh_casa||0;
+      if(!isNaN(kwh)&&preco>0) custoField.value=(kwh*preco).toFixed(2);
     }
   }
-
-  // Expõe para uso nos eventos inline do HTML
   window.recalcularCamposRecarga = recalcularCamposRecarga;
 
   window.salvarRecarga = async () => {
@@ -373,14 +395,17 @@
     const obs  =document.getElementById('rec-obs').value.trim();
     if(!data||isNaN(odIni)||isNaN(odFim)||isNaN(kwh)||isNaN(custo)){ showToast('Preencha todos os campos obrigatórios.',true); return; }
     if(odFim<=odIni){ showToast('Odômetro fim deve ser maior que início.',true); return; }
-    const id=genId();
+    const id=editandoRecargaId||genId();
     const rec={id,data:new Date(data).toISOString(),odometro_inicio:odIni,odometro_fim:odFim,
       kwh,custo_total:custo,local,tipo_recarga:tipo,observacao:obs,
       bateria_inicio_percent:batIni,bateria_fim_percent:batFim};
     try{
       await setDoc(doc(db,'usuarios',uid(),'recargas',id),rec);
-      RECARGAS.unshift(rec); RECARGAS.sort((a,b)=>b.data.localeCompare(a.data));
-      renderAll(); fecharModalRecarga(); showToast('Recarga salva! ⚡');
+      if(editandoRecargaId){ RECARGAS=RECARGAS.map(r=>r.id===id?rec:r); }
+      else { RECARGAS.unshift(rec); }
+      RECARGAS.sort((a,b)=>b.data.localeCompare(a.data));
+      renderAll(); fecharModalRecarga();
+      showToast(editandoRecargaId?'Recarga atualizada! ✅':'Recarga salva! ⚡');
     }catch(e){ showToast('Erro ao salvar: '+e.message,true); }
   };
 
@@ -391,12 +416,31 @@
   };
 
   // ── Modal Manutenção ──────────────────────────────────────────────
+  let editandoManutencaoId = null;
+
   window.abrirModalManutencao = () => {
+    editandoManutencaoId=null;
     document.getElementById('form-manutencao').reset();
     document.getElementById('man-data').value=new Date().toISOString().slice(0,10);
+    document.getElementById('modal-manutencao-title').textContent='🔧 Nova Manutenção';
     document.getElementById('modal-manutencao').classList.add('open');
   };
-  window.fecharModalManutencao = () => document.getElementById('modal-manutencao').classList.remove('open');
+
+  window.editarManutencao = (id) => {
+    const m=MANUTENCOES.find(x=>x.id===id); if(!m) return;
+    editandoManutencaoId=id;
+    document.getElementById('form-manutencao').reset();
+    document.getElementById('man-data').value    = m.data?new Date(m.data).toISOString().slice(0,10):'';
+    document.getElementById('man-tipo').value    = m.tipo||'';
+    document.getElementById('man-desc').value    = m.descricao||'';
+    document.getElementById('man-od').value      = m.odometro||'';
+    document.getElementById('man-custo').value   = m.custo||'';
+    document.getElementById('man-forn').value    = m.fornecedor||'';
+    document.getElementById('modal-manutencao-title').textContent='✏️ Editar Manutenção';
+    document.getElementById('modal-manutencao').classList.add('open');
+  };
+
+  window.fecharModalManutencao = () => { document.getElementById('modal-manutencao').classList.remove('open'); editandoManutencaoId=null; };
 
   window.salvarManutencao = async () => {
     const data=document.getElementById('man-data').value;
@@ -406,12 +450,15 @@
     const odometro=parseFloat(document.getElementById('man-od').value);
     const fornecedor=document.getElementById('man-forn').value.trim();
     if(!data||!tipo||!descricao||isNaN(custo)||isNaN(odometro)){ showToast('Preencha todos os campos obrigatórios.',true); return; }
-    const id=genId();
+    const id=editandoManutencaoId||genId();
     const m={id,data:new Date(data).toISOString(),tipo,descricao,custo,odometro,fornecedor};
     try{
       await setDoc(doc(db,'usuarios',uid(),'manutencoes',id),m);
-      MANUTENCOES.unshift(m); MANUTENCOES.sort((a,b)=>b.data.localeCompare(a.data));
-      renderManutencoes(); renderDashboard(); fecharModalManutencao(); showToast('Manutenção salva! 🔧');
+      if(editandoManutencaoId){ MANUTENCOES=MANUTENCOES.map(x=>x.id===id?m:x); }
+      else { MANUTENCOES.unshift(m); }
+      MANUTENCOES.sort((a,b)=>b.data.localeCompare(a.data));
+      renderManutencoes(); renderDashboard(); fecharModalManutencao();
+      showToast(editandoManutencaoId?'Manutenção atualizada! ✅':'Manutenção salva! 🔧');
     }catch(e){ showToast('Erro ao salvar: '+e.message,true); }
   };
 
@@ -516,37 +563,54 @@
   window.exportarPDF = () => {
     const {jsPDF}=window.jspdf;
     const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-    const s=calcStats();
-    const verde=[0,200,100], azul=[40,180,240], cinza=[136,153,170], fundo=[17,24,39];
+    const preto=[30,30,30], cinza=[100,100,100], cinzaClaro=[210,210,210];
+    const verdeImp=[0,140,75], azulImp=[0,100,180];
     const W=210, pad=14;
     let y=pad;
 
-    // Header
-    pdf.setFillColor(...fundo); pdf.rect(0,0,W,28,'F');
-    pdf.setTextColor(...verde); pdf.setFontSize(18); pdf.setFont('helvetica','bold');
-    pdf.text('Meu EV',pad,18);
-    pdf.setTextColor(232,244,253); pdf.setFontSize(9); pdf.setFont('helvetica','normal');
-    pdf.text('Relatório completo · gerado em '+new Date().toLocaleDateString('pt-BR'),pad,24);
+    // Header — fundo branco, linha verde no topo
+    pdf.setFillColor(...verdeImp); pdf.rect(0,0,W,2,'F');
+    pdf.setTextColor(...verdeImp); pdf.setFontSize(20); pdf.setFont('helvetica','bold');
+    pdf.text('Meu EV',pad,14);
+    pdf.setTextColor(...cinza); pdf.setFontSize(9); pdf.setFont('helvetica','normal');
+    pdf.text('Relatório completo · gerado em '+new Date().toLocaleDateString('pt-BR'),pad,20);
     const vNome=CONFIG?(CONFIG.ano?`${CONFIG.fabricante} ${CONFIG.modelo} (${CONFIG.ano})`:`${CONFIG.fabricante} ${CONFIG.modelo}`):'Veículo não configurado';
-    pdf.text(vNome,W-pad,24,{align:'right'});
-    y=36;
+    pdf.setTextColor(...preto); pdf.setFont('helvetica','bold');
+    pdf.text(vNome,W-pad,20,{align:'right'});
+    pdf.setDrawColor(...cinzaClaro); pdf.line(pad,24,W-pad,24);
+    y=30;
 
-    const secTitle=(txt)=>{ pdf.setFillColor(26,34,53); pdf.rect(pad-2,y-4,W-2*pad+4,8,'F'); pdf.setTextColor(...verde); pdf.setFontSize(10); pdf.setFont('helvetica','bold'); pdf.text(txt,pad,y+1); y+=10; pdf.setTextColor(232,244,253); };
-    const kv=(label,val,x,yy,lc=[...cinza],vc=[232,244,253])=>{ pdf.setFontSize(8); pdf.setTextColor(...lc); pdf.text(label,x,yy); pdf.setTextColor(...vc); pdf.setFont('helvetica','bold'); pdf.text(val,x,yy+5); pdf.setFont('helvetica','normal'); };
+    const secTitle=(txt,cor=verdeImp)=>{
+      pdf.setFillColor(245,245,245); pdf.rect(pad-2,y-4,W-2*pad+4,8,'F');
+      pdf.setDrawColor(...cinzaClaro); pdf.rect(pad-2,y-4,W-2*pad+4,8,'S');
+      pdf.setTextColor(...cor); pdf.setFontSize(9); pdf.setFont('helvetica','bold');
+      pdf.text(txt,pad,y+1); y+=12;
+      pdf.setTextColor(...preto); pdf.setFont('helvetica','normal');
+    };
+
+    const kv=(label,val,x,yy,corVal=preto)=>{
+      pdf.setFontSize(7.5); pdf.setTextColor(...cinza); pdf.setFont('helvetica','normal');
+      pdf.text(label,x,yy);
+      pdf.setTextColor(...corVal); pdf.setFont('helvetica','bold');
+      pdf.text(val,x,yy+5);
+      pdf.setFont('helvetica','normal');
+    };
+
+    const s=calcStats();
 
     // Recargas resumo
     secTitle('RECARGAS');
     kv('Total kWh',fmtNum(s.totalKwh,1,' kWh'),pad,y);
-    kv('Km percorridos',fmtNum(s.totalKm,0,' km'),pad+44,y);
-    kv('Consumo médio',fmtConsumo(s.consumoMed),pad+88,y);
-    kv('Gasto total',fmtBRL(s.totalCusto),pad+138,y);
+    kv('Km percorridos',fmtNum(s.totalKm,0,' km'),pad+48,y);
+    kv('Consumo médio',fmtConsumo(s.consumoMed),pad+96,y,azulImp);
+    kv('Gasto total',fmtBRL(s.totalCusto),pad+148,y);
     y+=14;
     kv('Custo/km',fmtBRL(s.custoPorKm)+'/km',pad,y);
-    kv('Custo/kWh',fmtBRL(s.custoPorKwh)+'/kWh',pad+44,y);
-    kv('Nº recargas',RECARGAS.length+'',pad+88,y);
+    kv('Custo/kWh',fmtBRL(s.custoPorKwh)+'/kWh',pad+48,y);
+    kv('Nº recargas',RECARGAS.length+'',pad+96,y);
     if(CONFIG){
       const gasol=s.totalKm>0?(s.totalKm/(CONFIG.consumo_combustivel||12))*(CONFIG.preco_combustivel||6):0;
-      kv('Economia vs gasolina',fmtBRL(Math.max(0,gasol-s.totalCusto)),pad+138,y,[...verde],[...verde]);
+      kv('Economia vs gasolina',fmtBRL(Math.max(0,gasol-s.totalCusto)),pad+148,y,verdeImp);
     }
     y+=16;
 
@@ -555,54 +619,58 @@
     const consumoMap=calcConsumoReal(RECARGAS);
     pdf.autoTable({
       startY:y, margin:{left:pad,right:pad},
-      head:[['Data','Local','kWh','Km','Consumo','Bat.Ini','Bat.Fim','Custo','Tipo']],
+      head:[['Data','Local','Bat.Ini','Bat.Fim','kWh','Km','Consumo','Custo','Tipo']],
       body:RECARGAS.map(r=>{ const cm=consumoMap[r.id]||{}; return [
-        fmtDate(r.data),r.local||'--',fmtNum(r.kwh,2),fmtNum(cm.km||0,0),fmtConsumo(cm.consumo),
+        fmtDate(r.data), r.local||'--',
         r.bateria_inicio_percent!=null?r.bateria_inicio_percent+'%':'--',
         r.bateria_fim_percent!=null?r.bateria_fim_percent+'%':'--',
-        fmtBRL(r.custo_total),r.tipo_recarga||'AC'
+        fmtNum(r.kwh,2), fmtNum(cm.km||0,0),
+        fmtConsumo(cm.consumo), fmtBRL(r.custo_total), r.tipo_recarga||'--'
       ]; }),
-      styles:{fontSize:7,cellPadding:2,textColor:[232,244,253],fillColor:[17,24,39]},
-      headStyles:{fillColor:[26,34,53],textColor:[...verde],fontStyle:'bold'},
-      alternateRowStyles:{fillColor:[20,30,50]},
-      theme:'plain'
+      styles:{fontSize:7,cellPadding:2,textColor:[...preto],fillColor:[255,255,255]},
+      headStyles:{fillColor:[...verdeImp],textColor:[255,255,255],fontStyle:'bold'},
+      alternateRowStyles:{fillColor:[245,250,247]},
+      theme:'grid', tableLineColor:[...cinzaClaro], tableLineWidth:0.2
     });
     y=pdf.lastAutoTable.finalY+10;
 
     // Manutenção resumo
     if(y>240){ pdf.addPage(); y=pad; }
-    secTitle('MANUTENÇÃO');
+    secTitle('MANUTENÇÃO', azulImp);
     kv('Total gasto',fmtBRL(s.totalManut),pad,y);
-    kv('Despesas fixas',fmtBRL(s.fixas),pad+55,y);
-    kv('Despesas variáveis',fmtBRL(s.varrs),pad+110,y);
-    kv('Custo/km',fmtBRL(s.manutPorKm)+'/km',pad+165,y);
+    kv('Despesas fixas',fmtBRL(s.fixas),pad+52,y);
+    kv('Despesas variáveis',fmtBRL(s.varrs),pad+104,y);
+    kv('Custo/km',fmtBRL(s.manutPorKm)+'/km',pad+160,y);
     y+=16;
 
     // Tabela manutenções
-    secTitle('HISTÓRICO DE MANUTENÇÕES');
+    secTitle('HISTÓRICO DE MANUTENÇÕES', azulImp);
     pdf.autoTable({
       startY:y, margin:{left:pad,right:pad},
-      head:[['Data','Tipo','Descrição','Fornecedor','Odômetro','Custo']],
+      head:[['Data','Categoria','Descrição','Fornecedor','Odômetro','Custo']],
       body:MANUTENCOES.map(m=>[fmtDate(m.data),m.tipo||'--',m.descricao||'--',m.fornecedor||'--',fmtNum(m.odometro,0,' km'),fmtBRL(m.custo)]),
-      styles:{fontSize:7,cellPadding:2,textColor:[232,244,253],fillColor:[17,24,39]},
-      headStyles:{fillColor:[26,34,53],textColor:[...azul],fontStyle:'bold'},
-      alternateRowStyles:{fillColor:[20,30,50]},
-      theme:'plain'
+      styles:{fontSize:7,cellPadding:2,textColor:[...preto],fillColor:[255,255,255]},
+      headStyles:{fillColor:[...azulImp],textColor:[255,255,255],fontStyle:'bold'},
+      alternateRowStyles:{fillColor:[245,248,252]},
+      theme:'grid', tableLineColor:[...cinzaClaro], tableLineWidth:0.2
     });
     y=pdf.lastAutoTable.finalY+10;
 
     // Totais gerais
     if(y>240){ pdf.addPage(); y=pad; }
     secTitle('DESPESAS TOTAIS');
-    kv('Total geral',fmtBRL(s.totalGeral),pad,y,[...verde],[...verde]);
-    kv('Recargas',fmtBRL(s.totalCusto),pad+60,y);
-    kv('Manutenção',fmtBRL(s.totalManut),pad+110,y);
-    kv('Custo total/km',fmtBRL(s.totalGeralPorKm)+'/km',pad+160,y);
-    y+=18;
+    pdf.setFillColor(240,255,248); pdf.rect(pad-2,y-4,W-2*pad+4,20,'F');
+    pdf.setDrawColor(...cinzaClaro); pdf.rect(pad-2,y-4,W-2*pad+4,20,'S');
+    kv('TOTAL GERAL',fmtBRL(s.totalGeral),pad,y,verdeImp);
+    kv('Recargas',fmtBRL(s.totalCusto),pad+60,y,azulImp);
+    kv('Manutenção',fmtBRL(s.totalManut),pad+110,y,preto);
+    kv('Custo total/km',fmtBRL(s.totalGeralPorKm)+'/km',pad+158,y);
+    y+=22;
 
     // Footer
-    pdf.setFontSize(7); pdf.setTextColor(...cinza);
-    pdf.text('Meu EV Web · '+new Date().toLocaleString('pt-BR'),W/2,285,{align:'center'});
+    pdf.setDrawColor(...cinzaClaro); pdf.line(pad,280,W-pad,280);
+    pdf.setFontSize(7); pdf.setTextColor(...cinza); pdf.setFont('helvetica','normal');
+    pdf.text('Meu EV Web · '+new Date().toLocaleString('pt-BR'),W/2,284,{align:'center'});
 
     pdf.save('meuev_relatorio_'+new Date().toISOString().slice(0,10)+'.pdf');
     showToast('PDF gerado! 📄');
@@ -683,8 +751,11 @@
   .btn-action.blue:hover{filter:brightness(1.1);}
   .btn-action.pdf{background:var(--red);}
   .btn-action.pdf:hover{filter:brightness(1.1);}
-  .btn-del{background:transparent;border:none;cursor:pointer;font-size:.95rem;opacity:.4;transition:opacity .2s;padding:0 2px;}
-  .btn-del:hover{opacity:1;}
+  .btn-del{background:rgba(255,82,82,0.12);border:1px solid rgba(255,82,82,0.3);color:var(--red);cursor:pointer;font-size:.85rem;opacity:.7;transition:all .2s;padding:3px 7px;border-radius:6px;}
+  .btn-del:hover{opacity:1;background:rgba(255,82,82,0.25);border-color:var(--red);}
+  .btn-edit{background:rgba(64,196,255,0.12);border:1px solid rgba(64,196,255,0.3);color:var(--azul);cursor:pointer;font-size:.85rem;opacity:.7;transition:all .2s;padding:3px 7px;border-radius:6px;}
+  .btn-edit:hover{opacity:1;background:rgba(64,196,255,0.25);border-color:var(--azul);}
+  .acoes-td{display:flex;gap:5px;justify-content:flex-end;align-items:center;}
   .btn-refresh{background:transparent;border:1px solid var(--borda);color:var(--tx2);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:1rem;display:grid;place-items:center;transition:all .2s;flex-shrink:0;}
   .btn-refresh:hover{border-color:var(--verde);color:var(--verde);}
 
@@ -1050,7 +1121,7 @@
 <div id="modal-recarga" class="modal">
   <div class="modal-box">
     <div class="modal-header">
-      <span class="modal-title">⚡ Nova Recarga</span>
+      <span class="modal-title" id="modal-recarga-title">⚡ Nova Recarga</span>
       <button class="btn-close" onclick="fecharModalRecarga()">×</button>
     </div>
     <form id="form-recarga" onsubmit="return false">
@@ -1098,7 +1169,7 @@
 <div id="modal-manutencao" class="modal">
   <div class="modal-box">
     <div class="modal-header">
-      <span class="modal-title">🔧 Nova Manutenção</span>
+      <span class="modal-title" id="modal-manutencao-title">🔧 Nova Manutenção</span>
       <button class="btn-close" onclick="fecharModalManutencao()">×</button>
     </div>
     <form id="form-manutencao" onsubmit="return false">
