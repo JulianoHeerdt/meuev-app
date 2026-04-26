@@ -1,365 +1,730 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Política de Privacidade — Meu EV</title>
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet"/>
-  <style>
-    :root {
-      --verde:   #00C896;
-      --verde2:  #00E5A0;
-      --fundo:   #080f18;
-      --card:    #0d1a27;
-      --borda:   #162435;
-      --texto:   #e8f0f8;
-      --sub:     #6b8ba4;
-      --num:     #00C89622;
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meu EV — Painel Web</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet" />
+
+  <!-- Firebase SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+    import { getFirestore, collection, doc, getDocs, getDoc, orderBy, query }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+    // ── Firebase config (mesmo projeto do app Android) ──────────────
+    const firebaseConfig = {
+      apiKey: "AIzaSyBOtYJv9il0UqinNDsKzBgbzsaRyjBNIec",
+      authDomain: "meu-ev.firebaseapp.com",
+      projectId: "meu-ev",
+      storageBucket: "meu-ev.firebasestorage.app",
+      messagingSenderId: "754930549464",
+      appId: "1:754930549464:android:b45231277d05a994088dad"
+    };
+
+    const app  = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db   = getFirestore(app);
+
+    // ── helpers ─────────────────────────────────────────────────────
+    const fmtBRL = v => v != null ? new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(v) : '--';
+    const fmtNum = (v, d=1, suf='') => (v == null || v === 0) ? '--' : v.toFixed(d)+suf;
+    const fmtDate = s => {
+      if (!s) return '--';
+      const d = new Date(s);
+      return d.toLocaleDateString('pt-BR');
+    };
+
+    // ── UI state ────────────────────────────────────────────────────
+    let RECARGAS = [], MANUTENCOES = [], CONFIG = null;
+    let currentTab = 'dashboard';
+
+    // ── AUTH listeners ───────────────────────────────────────────────
+    onAuthStateChanged(auth, async user => {
+      if (user) {
+        showApp();
+        document.getElementById('user-email').textContent = user.email;
+        await carregarTudo(user.uid);
+      } else {
+        showLogin();
+      }
+    });
+
+    async function carregarTudo(uid) {
+      showLoading(true);
+      try {
+        // Config do veículo
+        const userDoc = await getDoc(doc(db, 'usuarios', uid));
+        CONFIG = userDoc.exists() && userDoc.data().configuracao
+          ? userDoc.data().configuracao : null;
+        if (CONFIG) renderVeiculoInfo();
+
+        // Recargas
+        const rSnap = await getDocs(query(collection(db,'usuarios',uid,'recargas'), orderBy('data','desc')));
+        RECARGAS = rSnap.docs.map(d => ({...d.data(), id: d.id}));
+
+        // Manutenções
+        const mSnap = await getDocs(query(collection(db,'usuarios',uid,'manutencoes'), orderBy('data','desc')));
+        MANUTENCOES = mSnap.docs.map(d => ({...d.data(), id: d.id}));
+
+        renderDashboard();
+        renderHistorico();
+        renderManutencoes();
+      } catch(e) {
+        console.error(e);
+        showToast('Erro ao carregar dados: ' + e.message, true);
+      } finally {
+        showLoading(false);
+      }
     }
 
+    // ── Stats ────────────────────────────────────────────────────────
+    function calcStats() {
+      const totalKwh    = RECARGAS.reduce((s,r) => s + (r.kwh||0), 0);
+      const totalCusto  = RECARGAS.reduce((s,r) => s + (r.custo_total||0), 0);
+      const totalKm     = RECARGAS.reduce((s,r) => s + ((r.odometro_fim||0)-(r.odometro_inicio||0)), 0);
+      const consumoMed  = totalKwh > 0 ? totalKm / totalKwh : 0;
+      const custoPorKm  = totalKm  > 0 ? totalCusto / totalKm : 0;
+      const custoPorKwh = totalKwh > 0 ? totalCusto / totalKwh : 0;
+      const totalManut  = MANUTENCOES.reduce((s,m) => s + (m.custo||0), 0);
+      return { totalKwh, totalCusto, totalKm, consumoMed, custoPorKm, custoPorKwh, totalManut };
+    }
+
+    // ── Render dashboard ─────────────────────────────────────────────
+    function renderVeiculoInfo() {
+      const c = CONFIG;
+      if (!c) return;
+      const name = c.ano ? `${c.fabricante} ${c.modelo} (${c.ano})` : `${c.fabricante} ${c.modelo}`;
+      document.getElementById('veiculo-nome').textContent = name;
+      document.getElementById('veiculo-bat').textContent  = fmtNum(c.capacidade_bateria_kwh,1,' kWh');
+      document.getElementById('veiculo-aut').textContent  = fmtNum(c.autonomia_inmetro_km,0,' km');
+    }
+
+    function renderDashboard() {
+      const s = calcStats();
+      document.getElementById('stat-kwh').textContent        = fmtNum(s.totalKwh,1,' kWh');
+      document.getElementById('stat-km').textContent         = fmtNum(s.totalKm,0,' km');
+      document.getElementById('stat-custo').textContent      = fmtBRL(s.totalCusto);
+      document.getElementById('stat-consumo').textContent    = fmtNum(s.consumoMed,2,' km/kWh');
+      document.getElementById('stat-custoKm').textContent    = fmtBRL(s.custoPorKm) + '/km';
+      document.getElementById('stat-custoKwh').textContent   = fmtBRL(s.custoPorKwh) + '/kWh';
+      document.getElementById('stat-manut').textContent      = fmtBRL(s.totalManut);
+      document.getElementById('stat-recargas').textContent   = RECARGAS.length;
+
+      // Últimas 5 recargas
+      const ul = document.getElementById('ultimas-recargas');
+      ul.innerHTML = '';
+      RECARGAS.slice(0,5).forEach(r => {
+        const km = (r.odometro_fim||0) - (r.odometro_inicio||0);
+        ul.insertAdjacentHTML('beforeend', `
+          <div class="list-item">
+            <div class="list-item-left">
+              <div class="bolt-icon">⚡</div>
+              <div>
+                <div class="list-title">${r.local || 'Recarga'}</div>
+                <div class="list-sub">${fmtDate(r.data)} · ${fmtNum(km,0,'km')} percorridos</div>
+              </div>
+            </div>
+            <div class="list-right">
+              <div class="list-value">${fmtNum(r.kwh,2,' kWh')}</div>
+              <div class="list-cost">${fmtBRL(r.custo_total)}</div>
+            </div>
+          </div>`);
+      });
+      if (RECARGAS.length === 0) ul.innerHTML = '<p class="empty">Nenhuma recarga registrada.</p>';
+
+      // Comparativo combustível
+      if (CONFIG) {
+        const s2 = calcStats();
+        const economiaCombKm = CONFIG.consumo_combustivel || 12;
+        const precoComb = CONFIG.preco_combustivel || 6.0;
+        const custoSeGasolina = s2.totalKm > 0 ? (s2.totalKm / economiaCombKm) * precoComb : 0;
+        const economia = custoSeGasolina - s2.totalCusto;
+        document.getElementById('comb-gasto').textContent  = fmtBRL(custoSeGasolina);
+        document.getElementById('comb-ev').textContent     = fmtBRL(s2.totalCusto);
+        document.getElementById('comb-eco').textContent    = fmtBRL(Math.max(0, economia));
+      }
+
+      renderGrafico();
+    }
+
+    function renderGrafico() {
+      // Últimas 10 recargas para o gráfico de barras simples
+      const dados = RECARGAS.slice(0,10).reverse();
+      const container = document.getElementById('grafico-barras');
+      if (!dados.length) { container.innerHTML = '<p class="empty">Sem dados para exibir.</p>'; return; }
+      const maxKwh = Math.max(...dados.map(r => r.kwh||0));
+      container.innerHTML = dados.map(r => {
+        const pct = maxKwh > 0 ? ((r.kwh||0)/maxKwh*100) : 0;
+        return `<div class="bar-wrap">
+          <div class="bar-label">${fmtNum(r.kwh,1)}</div>
+          <div class="bar-outer"><div class="bar-inner" style="height:${pct}%"></div></div>
+          <div class="bar-date">${fmtDate(r.data).slice(0,5)}</div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderHistorico() {
+      const tbody = document.getElementById('hist-tbody');
+      tbody.innerHTML = '';
+      if (!RECARGAS.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">Nenhuma recarga.</td></tr>';
+        return;
+      }
+      RECARGAS.forEach(r => {
+        const km = (r.odometro_fim||0) - (r.odometro_inicio||0);
+        const cons = km > 0 && r.kwh > 0 ? (km/r.kwh).toFixed(2) : '--';
+        tbody.insertAdjacentHTML('beforeend', `
+          <tr>
+            <td>${fmtDate(r.data)}</td>
+            <td>${r.local || '--'}</td>
+            <td class="num">${fmtNum(r.kwh,2,' kWh')}</td>
+            <td class="num">${fmtNum(km,0,' km')}</td>
+            <td class="num">${cons} km/kWh</td>
+            <td class="num">${fmtBRL(r.custo_total)}</td>
+            <td><span class="badge ${r.tipo_recarga === 'DC' ? 'badge-blue' : 'badge-green'}">${r.tipo_recarga || 'AC'}</span></td>
+          </tr>`);
+      });
+    }
+
+    function renderManutencoes() {
+      const tbody = document.getElementById('manut-tbody');
+      tbody.innerHTML = '';
+      if (!MANUTENCOES.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">Nenhuma manutenção.</td></tr>';
+        return;
+      }
+      MANUTENCOES.forEach(m => {
+        tbody.insertAdjacentHTML('beforeend', `
+          <tr>
+            <td>${fmtDate(m.data)}</td>
+            <td>${m.tipo || '--'}</td>
+            <td>${m.descricao || '--'}</td>
+            <td class="num">${fmtNum(m.odometro,0,' km')}</td>
+            <td class="num">${fmtBRL(m.custo)}</td>
+          </tr>`);
+      });
+    }
+
+    // ── Navegação ────────────────────────────────────────────────────
+    window.navTo = function(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-'+tab));
+    };
+
+    // ── Auth actions ─────────────────────────────────────────────────
+    window.doLogin = async function() {
+      const email = document.getElementById('email').value.trim();
+      const pass  = document.getElementById('pass').value;
+      const btn   = document.getElementById('login-btn');
+      btn.disabled = true;
+      btn.textContent = 'Entrando…';
+      try {
+        await signInWithEmailAndPassword(auth, email, pass);
+      } catch(e) {
+        showToast('Erro: ' + (e.code === 'auth/invalid-credential' ? 'E-mail ou senha incorretos.' : e.message), true);
+        btn.disabled = false;
+        btn.textContent = 'Entrar';
+      }
+    };
+
+    window.doLogout = async function() {
+      await signOut(auth);
+    };
+
+    window.doForgot = async function() {
+      const email = document.getElementById('email').value.trim();
+      if (!email) { showToast('Digite seu e-mail primeiro.', true); return; }
+      try {
+        await sendPasswordResetEmail(auth, email);
+        showToast('E-mail de recuperação enviado!');
+      } catch(e) {
+        showToast('Erro: ' + e.message, true);
+      }
+    };
+
+    window.doRefresh = async function() {
+      const user = auth.currentUser;
+      if (user) await carregarTudo(user.uid);
+    };
+
+    // ── UI helpers ───────────────────────────────────────────────────
+    function showLogin() {
+      document.getElementById('login-view').style.display = 'flex';
+      document.getElementById('app-view').style.display   = 'none';
+    }
+    function showApp() {
+      document.getElementById('login-view').style.display = 'none';
+      document.getElementById('app-view').style.display   = 'flex';
+      navTo('dashboard');
+    }
+    function showLoading(v) {
+      document.getElementById('loader').style.display = v ? 'flex' : 'none';
+    }
+    function showToast(msg, err=false) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className   = 'toast show' + (err ? ' error' : '');
+      setTimeout(() => t.className = 'toast', 3500);
+    }
+
+    // Enter key on login form
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('pass').addEventListener('keydown', e => {
+        if (e.key === 'Enter') window.doLogin();
+      });
+    });
+  </script>
+
+  <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      background: var(--fundo);
-      color: var(--texto);
-      font-family: 'DM Sans', sans-serif;
-      font-weight: 300;
-      line-height: 1.75;
-      min-height: 100vh;
+    :root {
+      --verde:     #00E676;
+      --verde-esc: #00C853;
+      --azul:      #40C4FF;
+      --fundo:     #0A0E17;
+      --card:      #111827;
+      --card2:     #1A2235;
+      --borda:     #1E2D42;
+      --tx1:       #E8F4FD;
+      --tx2:       #8899AA;
+      --red:       #FF5252;
+      --yellow:    #FFD740;
+      --r:         16px;
+      --font-display: 'Syne', sans-serif;
+      --font-mono:    'Space Mono', monospace;
     }
 
-    /* ── background grid ── */
-    body::before {
-      content: '';
-      position: fixed;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(0,200,150,.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,200,150,.03) 1px, transparent 1px);
-      background-size: 48px 48px;
-      pointer-events: none;
-      z-index: 0;
+    html, body { height: 100%; background: var(--fundo); color: var(--tx1); font-family: var(--font-display); }
+
+    /* ── loader ── */
+    #loader {
+      position: fixed; inset: 0; z-index: 999;
+      background: rgba(10,14,23,.85);
+      display: none; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+    }
+    .spinner {
+      width: 44px; height: 44px;
+      border: 3px solid var(--borda);
+      border-top-color: var(--verde);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── toast ── */
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+      background: var(--card2); color: var(--tx1); border: 1px solid var(--borda);
+      padding: 12px 24px; border-radius: 50px; font-size: .85rem;
+      transition: transform .35s ease, opacity .35s; opacity: 0; z-index: 9999;
+    }
+    .toast.show  { transform: translateX(-50%) translateY(0); opacity: 1; }
+    .toast.error { border-color: var(--red); color: var(--red); }
+
+    /* ── login ── */
+    #login-view {
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0,230,118,.08) 0%, transparent 70%);
+    }
+    .login-box {
+      width: min(420px,90vw);
+      background: var(--card); border: 1px solid var(--borda); border-radius: var(--r);
+      padding: 40px 36px;
+      box-shadow: 0 32px 64px rgba(0,0,0,.5);
+      animation: fadeUp .5s ease;
+    }
+    @keyframes fadeUp { from { opacity:0; transform: translateY(24px); } }
+    .login-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 32px; }
+    .login-logo .bolt { font-size: 2rem; filter: drop-shadow(0 0 12px var(--verde)); }
+    .login-logo span { font-size: 1.6rem; font-weight: 800; letter-spacing: -1px; }
+    .login-logo .ev  { color: var(--verde); }
+
+    label { display: block; font-size: .8rem; color: var(--tx2); margin-bottom: 6px; letter-spacing: .06em; text-transform: uppercase; }
+    input[type=email], input[type=password] {
+      width: 100%; background: var(--card2); border: 1px solid var(--borda); border-radius: 10px;
+      color: var(--tx1); padding: 12px 14px; font-size: .95rem; font-family: inherit;
+      margin-bottom: 16px; transition: border-color .2s;
+    }
+    input:focus { outline: none; border-color: var(--verde); }
+
+    .btn-primary {
+      width: 100%; padding: 14px; background: var(--verde); color: var(--fundo);
+      font-weight: 800; font-family: inherit; font-size: 1rem; border: none;
+      border-radius: 12px; cursor: pointer; letter-spacing: .02em;
+      transition: background .2s, transform .1s;
+    }
+    .btn-primary:hover  { background: var(--verde-esc); }
+    .btn-primary:active { transform: scale(.98); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+
+    .forgot-link {
+      display: block; text-align: center; margin-top: 14px;
+      color: var(--tx2); font-size: .82rem; cursor: pointer; text-decoration: underline;
+    }
+    .forgot-link:hover { color: var(--verde); }
+
+    /* ── app shell ── */
+    #app-view {
+      min-height: 100vh; flex-direction: column; display: none;
     }
 
-    .wrap {
-      position: relative;
-      z-index: 1;
-      max-width: 760px;
-      margin: 0 auto;
-      padding: 0 24px 80px;
+    /* ── top bar ── */
+    .topbar {
+      height: 60px; background: var(--card); border-bottom: 1px solid var(--borda);
+      display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
+      position: sticky; top: 0; z-index: 100;
     }
-
-    /* ── header ── */
-    header {
-      padding: 64px 0 48px;
-      border-bottom: 1px solid var(--borda);
-      margin-bottom: 56px;
+    .topbar-brand { display: flex; align-items: center; gap: 8px; font-size: 1.1rem; font-weight: 800; letter-spacing: -.5px; }
+    .topbar-brand .ev { color: var(--verde); }
+    .topbar-right { display: flex; align-items: center; gap: 16px; }
+    .topbar-email { font-size: .8rem; color: var(--tx2); }
+    .btn-ghost {
+      background: transparent; border: 1px solid var(--borda); color: var(--tx2);
+      padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: .82rem; font-family: inherit;
+      transition: all .2s;
     }
+    .btn-ghost:hover { border-color: var(--verde); color: var(--verde); }
 
-    .logo-row {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      margin-bottom: 28px;
+    /* ── nav tabs ── */
+    .nav-tabs {
+      display: flex; gap: 4px; padding: 0 24px;
+      background: var(--card); border-bottom: 1px solid var(--borda);
+      overflow-x: auto; scrollbar-width: none;
     }
-
-    .logo-icon {
-      width: 44px;
-      height: 44px;
-      background: linear-gradient(135deg, var(--verde2), var(--verde));
-      border-radius: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      box-shadow: 0 0 24px rgba(0,200,150,.35);
+    .nav-tabs::-webkit-scrollbar { display: none; }
+    .tab-btn {
+      padding: 12px 18px; border: none; background: transparent;
+      color: var(--tx2); font-family: inherit; font-size: .9rem; font-weight: 600;
+      cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap;
+      transition: color .2s, border-color .2s;
     }
+    .tab-btn.active { color: var(--verde); border-bottom-color: var(--verde); }
 
-    .logo-icon svg { width: 22px; height: 22px; }
+    /* ── panels ── */
+    .tab-panel { display: none; padding: 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
+    .tab-panel.active { display: block; animation: fadeUp .3s ease; }
 
-    .logo-name {
-      font-family: 'Syne', sans-serif;
-      font-size: 1.25rem;
-      font-weight: 700;
-      letter-spacing: .5px;
-      color: var(--texto);
+    /* ── section header ── */
+    .sec-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px;
     }
+    .sec-title { font-size: 1.25rem; font-weight: 800; letter-spacing: -.5px; }
 
-    h1 {
-      font-family: 'Syne', sans-serif;
-      font-size: clamp(2rem, 5vw, 3rem);
-      font-weight: 800;
-      line-height: 1.1;
-      letter-spacing: -.5px;
-      background: linear-gradient(135deg, #fff 30%, var(--verde));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      margin-bottom: 16px;
+    /* ── veiculo card ── */
+    .veiculo-card {
+      background: linear-gradient(135deg, var(--card2) 0%, rgba(0,230,118,.06) 100%);
+      border: 1px solid var(--borda); border-radius: var(--r);
+      padding: 20px 24px; margin-bottom: 20px;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
     }
+    .veiculo-name { font-size: 1.1rem; font-weight: 700; }
+    .veiculo-specs { display: flex; gap: 20px; }
+    .spec { text-align: center; }
+    .spec-val { font-size: 1rem; font-weight: 700; font-family: var(--font-mono); color: var(--verde); }
+    .spec-lbl { font-size: .72rem; color: var(--tx2); text-transform: uppercase; letter-spacing: .06em; }
 
-    .subtitle {
-      color: var(--sub);
-      font-size: .95rem;
-      letter-spacing: .3px;
+    /* ── stats grid ── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px; margin-bottom: 20px;
     }
+    .stat-card {
+      background: var(--card); border: 1px solid var(--borda); border-radius: var(--r);
+      padding: 18px 16px;
+      transition: border-color .2s, transform .2s;
+    }
+    .stat-card:hover { border-color: var(--verde); transform: translateY(-2px); }
+    .stat-lbl { font-size: .72rem; color: var(--tx2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+    .stat-val { font-size: 1.35rem; font-weight: 700; font-family: var(--font-mono); color: var(--tx1); }
+    .stat-card.accent .stat-val { color: var(--verde); }
+    .stat-card.blue   .stat-val { color: var(--azul); }
+    .stat-card.yellow .stat-val { color: var(--yellow); }
+
+    /* ── two-col ── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── card ── */
+    .card {
+      background: var(--card); border: 1px solid var(--borda); border-radius: var(--r);
+      padding: 20px;
+    }
+    .card-title { font-size: .9rem; font-weight: 700; color: var(--tx2); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 16px; }
+
+    /* ── list items ── */
+    .list-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 0; border-bottom: 1px solid var(--borda);
+    }
+    .list-item:last-child { border-bottom: none; }
+    .list-item-left { display: flex; align-items: center; gap: 12px; }
+    .bolt-icon { width: 36px; height: 36px; background: rgba(0,230,118,.1); border-radius: 10px;
+      display: grid; place-items: center; font-size: 1.1rem; }
+    .list-title { font-size: .9rem; font-weight: 600; }
+    .list-sub   { font-size: .78rem; color: var(--tx2); margin-top: 2px; }
+    .list-right { text-align: right; }
+    .list-value { font-family: var(--font-mono); font-size: .9rem; color: var(--verde); }
+    .list-cost  { font-size: .78rem; color: var(--tx2); }
+
+    /* ── gráfico barras ── */
+    #grafico-barras {
+      display: flex; align-items: flex-end; gap: 6px; height: 120px; padding-bottom: 24px; position: relative;
+    }
+    .bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
+    .bar-label { font-size: .65rem; color: var(--tx2); font-family: var(--font-mono); }
+    .bar-outer { flex: 1; width: 100%; display: flex; align-items: flex-end; }
+    .bar-inner {
+      width: 100%; background: linear-gradient(to top, var(--verde), var(--azul));
+      border-radius: 4px 4px 0 0; min-height: 4px;
+      transition: height .6s ease;
+    }
+    .bar-date { font-size: .6rem; color: var(--tx2); white-space: nowrap; }
+
+    /* ── comparativo ── */
+    .comp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; text-align: center; }
+    .comp-item .comp-val { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; }
+    .comp-item .comp-lbl { font-size: .72rem; color: var(--tx2); margin-top: 4px; }
+    .comp-item.eco .comp-val { color: var(--verde); }
+    .comp-item.comb .comp-val { color: var(--red); }
+
+    /* ── table ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+    th {
+      text-align: left; color: var(--tx2); font-size: .72rem; text-transform: uppercase; letter-spacing: .06em;
+      padding: 10px 12px; border-bottom: 1px solid var(--borda); font-weight: 600;
+    }
+    td { padding: 12px; border-bottom: 1px solid rgba(30,45,66,.5); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(0,230,118,.03); }
+    td.num { font-family: var(--font-mono); text-align: right; }
+    th:not(:first-child):not(:nth-child(2)) { text-align: right; }
 
     .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background: rgba(0,200,150,.1);
-      border: 1px solid rgba(0,200,150,.25);
-      color: var(--verde);
-      font-size: .78rem;
-      font-weight: 500;
-      padding: 4px 12px;
-      border-radius: 20px;
-      margin-top: 20px;
-      letter-spacing: .4px;
+      display: inline-block; padding: 2px 10px; border-radius: 50px;
+      font-size: .72rem; font-weight: 700; font-family: var(--font-mono);
     }
+    .badge-green { background: rgba(0,230,118,.15); color: var(--verde); }
+    .badge-blue  { background: rgba(64,196,255,.15); color: var(--azul); }
 
-    .badge::before {
-      content: '';
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--verde);
-      animation: pulse 2s ease-in-out infinite;
+    .empty { color: var(--tx2); font-size: .85rem; text-align: center; padding: 24px; }
+
+    /* ── refresh btn ── */
+    .btn-refresh {
+      background: transparent; border: 1px solid var(--borda); color: var(--tx2);
+      width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 1rem;
+      display: grid; place-items: center; transition: all .2s;
     }
+    .btn-refresh:hover { border-color: var(--verde); color: var(--verde); }
 
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%       { opacity: .4; transform: scale(.8); }
+    /* ── footer info ── */
+    .footer-note {
+      text-align: center; color: var(--tx2); font-size: .75rem;
+      padding: 24px; border-top: 1px solid var(--borda); margin-top: 8px;
     }
-
-    /* ── sections ── */
-    section {
-      margin-bottom: 40px;
-      background: var(--card);
-      border: 1px solid var(--borda);
-      border-radius: 16px;
-      padding: 32px;
-      position: relative;
-      overflow: hidden;
-      transition: border-color .2s;
-    }
-
-    section:hover { border-color: rgba(0,200,150,.2); }
-
-    .sec-num {
-      position: absolute;
-      top: 16px;
-      right: 20px;
-      font-family: 'Syne', sans-serif;
-      font-size: 4rem;
-      font-weight: 800;
-      color: var(--num);
-      line-height: 1;
-      user-select: none;
-    }
-
-    h2 {
-      font-family: 'Syne', sans-serif;
-      font-size: 1.05rem;
-      font-weight: 700;
-      color: var(--verde);
-      text-transform: uppercase;
-      letter-spacing: 1.5px;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    h2::before {
-      content: '';
-      display: inline-block;
-      width: 4px;
-      height: 16px;
-      background: var(--verde);
-      border-radius: 2px;
-      flex-shrink: 0;
-    }
-
-    p { color: #b0c4d8; margin-bottom: 12px; font-size: .95rem; }
-    p:last-child { margin-bottom: 0; }
-
-    ul {
-      list-style: none;
-      padding: 0;
-      margin: 8px 0 0;
-    }
-
-    ul li {
-      color: #b0c4d8;
-      font-size: .95rem;
-      padding: 6px 0 6px 20px;
-      position: relative;
-      border-bottom: 1px solid rgba(255,255,255,.04);
-    }
-
-    ul li:last-child { border-bottom: none; }
-
-    ul li::before {
-      content: '→';
-      position: absolute;
-      left: 0;
-      color: var(--verde);
-      font-size: .85rem;
-    }
-
-    a {
-      color: var(--verde);
-      text-decoration: none;
-      border-bottom: 1px solid rgba(0,200,150,.3);
-      transition: border-color .2s, color .2s;
-    }
-
-    a:hover { color: var(--verde2); border-color: var(--verde2); }
-
-    /* ── contact card ── */
-    .contact {
-      background: linear-gradient(135deg, rgba(0,200,150,.08), rgba(0,200,150,.03));
-      border-color: rgba(0,200,150,.25);
-    }
-
-    .contact-email {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      background: rgba(0,200,150,.12);
-      border: 1px solid rgba(0,200,150,.3);
-      color: var(--verde);
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-weight: 500;
-      font-size: .9rem;
-      margin-top: 12px;
-      text-decoration: none;
-      border-bottom: none;
-      transition: background .2s, box-shadow .2s;
-    }
-
-    .contact-email:hover {
-      background: rgba(0,200,150,.2);
-      box-shadow: 0 0 20px rgba(0,200,150,.2);
-    }
-
-    /* ── footer ── */
-    footer {
-      text-align: center;
-      padding-top: 40px;
-      color: var(--sub);
-      font-size: .82rem;
-      border-top: 1px solid var(--borda);
-    }
-
-    footer strong { color: var(--verde); font-weight: 500; }
+    .footer-note a { color: var(--verde); text-decoration: none; }
   </style>
 </head>
 <body>
-<div class="wrap">
 
-  <header>
-    <div class="logo-row">
-      <div class="logo-icon">
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z"
-                fill="#080f18" stroke="#080f18" stroke-width=".5"/>
-          <path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z" fill="white" fill-opacity=".95"/>
-        </svg>
-      </div>
-      <span class="logo-name">Meu EV</span>
+<!-- ── loader ── -->
+<div id="loader">
+  <div class="spinner"></div>
+  <span style="color:var(--tx2);font-size:.85rem;">Carregando dados…</span>
+</div>
+
+<!-- ── toast ── -->
+<div id="toast" class="toast"></div>
+
+<!-- ═══════════════════════════════════════════
+     LOGIN
+═════════════════════════════════════════════ -->
+<div id="login-view">
+  <div class="login-box">
+    <div class="login-logo">
+      <span class="bolt">⚡</span>
+      <span>Meu <span class="ev">EV</span></span>
     </div>
-    <h1>Política de<br/>Privacidade</h1>
-    <p class="subtitle">Como coletamos, usamos e protegemos seus dados.</p>
-    <span class="badge">Última atualização: 26 de abril de 2026</span>
+    <label for="email">E-mail</label>
+    <input type="email" id="email" placeholder="seu@email.com" autocomplete="username" />
+    <label for="pass">Senha</label>
+    <input type="password" id="pass" placeholder="••••••••" autocomplete="current-password" />
+    <button class="btn-primary" id="login-btn" onclick="doLogin()">Entrar</button>
+    <span class="forgot-link" onclick="doForgot()">Esqueci minha senha</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     APP
+═════════════════════════════════════════════ -->
+<div id="app-view">
+
+  <!-- top bar -->
+  <header class="topbar">
+    <div class="topbar-brand">⚡ Meu <span class="ev">EV</span></div>
+    <div class="topbar-right">
+      <span class="topbar-email" id="user-email"></span>
+      <button class="btn-ghost" onclick="doLogout()">Sair</button>
+    </div>
   </header>
 
-  <section>
-    <span class="sec-num">01</span>
-    <h2>Informações coletadas</h2>
-    <p>O Meu EV coleta apenas as informações necessárias para o funcionamento do aplicativo:</p>
-    <ul>
-      <li>Dados de autenticação: e-mail e, opcionalmente, conta Google — usados exclusivamente para identificação e acesso</li>
-      <li>Dados do veículo: fabricante, modelo, ano e especificações técnicas informadas pelo usuário</li>
-      <li>Dados de uso: registros de recargas, manutenções, odômetro, custos e consumo de energia</li>
-    </ul>
-  </section>
+  <!-- nav tabs -->
+  <nav class="nav-tabs">
+    <button class="tab-btn active" data-tab="dashboard" onclick="navTo('dashboard')">📊 Dashboard</button>
+    <button class="tab-btn" data-tab="historico"  onclick="navTo('historico')">⚡ Recargas</button>
+    <button class="tab-btn" data-tab="manutencao" onclick="navTo('manutencao')">🔧 Manutenções</button>
+  </nav>
 
-  <section>
-    <span class="sec-num">02</span>
-    <h2>Uso das informações</h2>
-    <p>As informações coletadas são utilizadas exclusivamente para:</p>
-    <ul>
-      <li>Autenticar o usuário e proteger o acesso aos seus dados pessoais</li>
-      <li>Armazenar e sincronizar os registros entre dispositivos do mesmo usuário</li>
-      <li>Calcular estatísticas de consumo e custos apresentadas no próprio aplicativo</li>
-    </ul>
-  </section>
+  <!-- ─── DASHBOARD ────────────────────────────────── -->
+  <div id="panel-dashboard" class="tab-panel active">
 
-  <section>
-    <span class="sec-num">03</span>
-    <h2>Compartilhamento de dados</h2>
-    <p>O Meu EV <strong>não vende, aluga ou compartilha</strong> dados pessoais com terceiros para fins comerciais.</p>
-    <p>Os dados são armazenados nos servidores do Firebase (Google LLC), sujeitos à <a href="https://policies.google.com/privacy" target="_blank">Política de Privacidade do Google</a>.</p>
-  </section>
+    <div class="sec-header">
+      <span class="sec-title">Visão Geral</span>
+      <button class="btn-refresh" onclick="doRefresh()" title="Atualizar">↺</button>
+    </div>
 
-  <section>
-    <span class="sec-num">04</span>
-    <h2>Armazenamento e segurança</h2>
-    <ul>
-      <li>Os dados são armazenados localmente no dispositivo e sincronizados com o Firebase Firestore</li>
-      <li>O acesso é protegido por autenticação obrigatória — nenhum dado é acessível sem credenciais válidas</li>
-      <li>A transmissão de dados utiliza conexões criptografadas (HTTPS/TLS)</li>
-    </ul>
-  </section>
+    <!-- Veículo -->
+    <div class="veiculo-card">
+      <div>
+        <div style="font-size:.72rem;color:var(--tx2);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">Veículo</div>
+        <div class="veiculo-name" id="veiculo-nome">—</div>
+      </div>
+      <div class="veiculo-specs">
+        <div class="spec">
+          <div class="spec-val" id="veiculo-bat">—</div>
+          <div class="spec-lbl">Bateria</div>
+        </div>
+        <div class="spec">
+          <div class="spec-val" id="veiculo-aut">—</div>
+          <div class="spec-lbl">Autonomia PBEV</div>
+        </div>
+      </div>
+    </div>
 
-  <section>
-    <span class="sec-num">05</span>
-    <h2>Câmera e imagens</h2>
-    <p>O aplicativo solicita acesso à câmera e à galeria exclusivamente para a leitura do painel do veículo via OCR (reconhecimento óptico de caracteres).</p>
-    <p>Nenhuma imagem capturada é armazenada em servidores externos ou compartilhada com terceiros.</p>
-  </section>
+    <!-- Stats grid -->
+    <div class="stats-grid">
+      <div class="stat-card accent">
+        <div class="stat-lbl">Total kWh</div>
+        <div class="stat-val" id="stat-kwh">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Km percorridos</div>
+        <div class="stat-val" id="stat-km">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Gasto total</div>
+        <div class="stat-val" id="stat-custo">—</div>
+      </div>
+      <div class="stat-card blue">
+        <div class="stat-lbl">Consumo médio</div>
+        <div class="stat-val" id="stat-consumo">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Custo / km</div>
+        <div class="stat-val" id="stat-custoKm">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Custo / kWh</div>
+        <div class="stat-val" id="stat-custoKwh">—</div>
+      </div>
+      <div class="stat-card yellow">
+        <div class="stat-lbl">Manutenções</div>
+        <div class="stat-val" id="stat-manut">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Nº recargas</div>
+        <div class="stat-val" id="stat-recargas">—</div>
+      </div>
+    </div>
 
-  <section>
-    <span class="sec-num">06</span>
-    <h2>Direitos do usuário</h2>
-    <p>O usuário pode, a qualquer momento:</p>
-    <ul>
-      <li>Exportar todos os seus dados em formato CSV diretamente pelo aplicativo</li>
-      <li>Solicitar a exclusão de sua conta e de todos os dados associados</li>
-      <li>Revogar o acesso da conta Google nas configurações do próprio dispositivo</li>
-    </ul>
-  </section>
+    <!-- Chart + últimas recargas -->
+    <div class="two-col">
+      <div class="card">
+        <div class="card-title">kWh por recarga (últimas 10)</div>
+        <div id="grafico-barras"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Últimas recargas</div>
+        <div id="ultimas-recargas"></div>
+      </div>
+    </div>
 
-  <section>
-    <span class="sec-num">07</span>
-    <h2>Menores de idade</h2>
-    <p>O aplicativo não é direcionado a menores de 18 anos e não coleta intencionalmente dados de menores. Caso identifiquemos tal situação, os dados serão removidos imediatamente.</p>
-  </section>
+    <!-- Comparativo combustível -->
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-title">Comparativo vs Combustível</div>
+      <div class="comp-grid">
+        <div class="comp-item comb">
+          <div class="comp-val" id="comb-gasto">—</div>
+          <div class="comp-lbl">Se usasse gasolina</div>
+        </div>
+        <div class="comp-item">
+          <div class="comp-val" id="comb-ev">—</div>
+          <div class="comp-lbl">Com elétrico</div>
+        </div>
+        <div class="comp-item eco">
+          <div class="comp-val" id="comb-eco">—</div>
+          <div class="comp-lbl">💚 Economia</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <section>
-    <span class="sec-num">08</span>
-    <h2>Alterações desta política</h2>
-    <p>Eventuais alterações serão publicadas nesta página com atualização da data indicada no topo. O uso continuado do aplicativo após as alterações implica concordância com a nova versão.</p>
-  </section>
+  <!-- ─── HISTÓRICO RECARGAS ──────────────────────── -->
+  <div id="panel-historico" class="tab-panel">
+    <div class="sec-header">
+      <span class="sec-title">Histórico de Recargas</span>
+      <button class="btn-refresh" onclick="doRefresh()" title="Atualizar">↺</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th><th>Local</th><th>kWh</th><th>Km</th><th>Consumo</th><th>Custo</th><th>Tipo</th>
+            </tr>
+          </thead>
+          <tbody id="hist-tbody">
+            <tr><td colspan="7" class="empty">Carregando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-  <section class="contact">
-    <span class="sec-num">09</span>
-    <h2>Contato</h2>
-    <p>Para dúvidas, solicitações de exclusão de dados ou qualquer questão relacionada à privacidade:</p>
-    <a href="mailto:juliano.heerdt@gmail.com" class="contact-email">
-      ✉ juliano.heerdt@gmail.com
-    </a>
-  </section>
+  <!-- ─── MANUTENÇÕES ──────────────────────────────── -->
+  <div id="panel-manutencao" class="tab-panel">
+    <div class="sec-header">
+      <span class="sec-title">Manutenções</span>
+      <button class="btn-refresh" onclick="doRefresh()" title="Atualizar">↺</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th><th>Tipo</th><th>Descrição</th><th>Odômetro</th><th>Custo</th>
+            </tr>
+          </thead>
+          <tbody id="manut-tbody">
+            <tr><td colspan="5" class="empty">Carregando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-  <footer>
-    <p>&copy; 2026 <strong>Meu EV</strong> — Todos os direitos reservados.</p>
-    <p style="margin-top:6px">Desenvolvido no Brasil 🇧🇷</p>
+  <footer class="footer-note">
+    Meu EV Web · dados sincronizados com o app Android · <a href="https://julianoheerdt.github.io/meuev-app/" target="_blank">GitHub Pages</a>
   </footer>
-
 </div>
+
 </body>
 </html>
