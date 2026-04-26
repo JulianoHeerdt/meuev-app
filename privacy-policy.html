@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Política de Privacidade — Meu EV</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --verde:   #00C896;
+      --verde2:  #00E5A0;
+      --fundo:   #080f18;
+      --card:    #0d1a27;
+      --borda:   #162435;
+      --texto:   #e8f0f8;
+      --sub:     #6b8ba4;
+      --num:     #00C89622;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--fundo);
+      color: var(--texto);
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 300;
+      line-height: 1.75;
+      min-height: 100vh;
+    }
+
+    /* ── background grid ── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,200,150,.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,200,150,.03) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+
+    /* ── header ── */
+    header {
+      padding: 64px 0 48px;
+      border-bottom: 1px solid var(--borda);
+      margin-bottom: 56px;
+    }
+
+    .logo-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+
+    .logo-icon {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, var(--verde2), var(--verde));
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 0 24px rgba(0,200,150,.35);
+    }
+
+    .logo-icon svg { width: 22px; height: 22px; }
+
+    .logo-name {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: .5px;
+      color: var(--texto);
+    }
+
+    h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -.5px;
+      background: linear-gradient(135deg, #fff 30%, var(--verde));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+    }
+
+    .subtitle {
+      color: var(--sub);
+      font-size: .95rem;
+      letter-spacing: .3px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0,200,150,.1);
+      border: 1px solid rgba(0,200,150,.25);
+      color: var(--verde);
+      font-size: .78rem;
+      font-weight: 500;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-top: 20px;
+      letter-spacing: .4px;
+    }
+
+    .badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--verde);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: .4; transform: scale(.8); }
+    }
+
+    /* ── sections ── */
+    section {
+      margin-bottom: 40px;
+      background: var(--card);
+      border: 1px solid var(--borda);
+      border-radius: 16px;
+      padding: 32px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .2s;
+    }
+
+    section:hover { border-color: rgba(0,200,150,.2); }
+
+    .sec-num {
+      position: absolute;
+      top: 16px;
+      right: 20px;
+      font-family: 'Syne', sans-serif;
+      font-size: 4rem;
+      font-weight: 800;
+      color: var(--num);
+      line-height: 1;
+      user-select: none;
+    }
+
+    h2 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--verde);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    h2::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 16px;
+      background: var(--verde);
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    p { color: #b0c4d8; margin-bottom: 12px; font-size: .95rem; }
+    p:last-child { margin-bottom: 0; }
+
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 0;
+    }
+
+    ul li {
+      color: #b0c4d8;
+      font-size: .95rem;
+      padding: 6px 0 6px 20px;
+      position: relative;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+
+    ul li:last-child { border-bottom: none; }
+
+    ul li::before {
+      content: '→';
+      position: absolute;
+      left: 0;
+      color: var(--verde);
+      font-size: .85rem;
+    }
+
+    a {
+      color: var(--verde);
+      text-decoration: none;
+      border-bottom: 1px solid rgba(0,200,150,.3);
+      transition: border-color .2s, color .2s;
+    }
+
+    a:hover { color: var(--verde2); border-color: var(--verde2); }
+
+    /* ── contact card ── */
+    .contact {
+      background: linear-gradient(135deg, rgba(0,200,150,.08), rgba(0,200,150,.03));
+      border-color: rgba(0,200,150,.25);
+    }
+
+    .contact-email {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0,200,150,.12);
+      border: 1px solid rgba(0,200,150,.3);
+      color: var(--verde);
+      padding: 10px 18px;
+      border-radius: 8px;
+      font-weight: 500;
+      font-size: .9rem;
+      margin-top: 12px;
+      text-decoration: none;
+      border-bottom: none;
+      transition: background .2s, box-shadow .2s;
+    }
+
+    .contact-email:hover {
+      background: rgba(0,200,150,.2);
+      box-shadow: 0 0 20px rgba(0,200,150,.2);
+    }
+
+    /* ── footer ── */
+    footer {
+      text-align: center;
+      padding-top: 40px;
+      color: var(--sub);
+      font-size: .82rem;
+      border-top: 1px solid var(--borda);
+    }
+
+    footer strong { color: var(--verde); font-weight: 500; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo-row">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z"
+                fill="#080f18" stroke="#080f18" stroke-width=".5"/>
+          <path d="M13 2L4.5 13.5H11L10 22L19.5 10.5H13L13 2Z" fill="white" fill-opacity=".95"/>
+        </svg>
+      </div>
+      <span class="logo-name">Meu EV</span>
+    </div>
+    <h1>Política de<br/>Privacidade</h1>
+    <p class="subtitle">Como coletamos, usamos e protegemos seus dados.</p>
+    <span class="badge">Última atualização: 26 de abril de 2026</span>
+  </header>
+
+  <section>
+    <span class="sec-num">01</span>
+    <h2>Informações coletadas</h2>
+    <p>O Meu EV coleta apenas as informações necessárias para o funcionamento do aplicativo:</p>
+    <ul>
+      <li>Dados de autenticação: e-mail e, opcionalmente, conta Google — usados exclusivamente para identificação e acesso</li>
+      <li>Dados do veículo: fabricante, modelo, ano e especificações técnicas informadas pelo usuário</li>
+      <li>Dados de uso: registros de recargas, manutenções, odômetro, custos e consumo de energia</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="sec-num">02</span>
+    <h2>Uso das informações</h2>
+    <p>As informações coletadas são utilizadas exclusivamente para:</p>
+    <ul>
+      <li>Autenticar o usuário e proteger o acesso aos seus dados pessoais</li>
+      <li>Armazenar e sincronizar os registros entre dispositivos do mesmo usuário</li>
+      <li>Calcular estatísticas de consumo e custos apresentadas no próprio aplicativo</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="sec-num">03</span>
+    <h2>Compartilhamento de dados</h2>
+    <p>O Meu EV <strong>não vende, aluga ou compartilha</strong> dados pessoais com terceiros para fins comerciais.</p>
+    <p>Os dados são armazenados nos servidores do Firebase (Google LLC), sujeitos à <a href="https://policies.google.com/privacy" target="_blank">Política de Privacidade do Google</a>.</p>
+  </section>
+
+  <section>
+    <span class="sec-num">04</span>
+    <h2>Armazenamento e segurança</h2>
+    <ul>
+      <li>Os dados são armazenados localmente no dispositivo e sincronizados com o Firebase Firestore</li>
+      <li>O acesso é protegido por autenticação obrigatória — nenhum dado é acessível sem credenciais válidas</li>
+      <li>A transmissão de dados utiliza conexões criptografadas (HTTPS/TLS)</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="sec-num">05</span>
+    <h2>Câmera e imagens</h2>
+    <p>O aplicativo solicita acesso à câmera e à galeria exclusivamente para a leitura do painel do veículo via OCR (reconhecimento óptico de caracteres).</p>
+    <p>Nenhuma imagem capturada é armazenada em servidores externos ou compartilhada com terceiros.</p>
+  </section>
+
+  <section>
+    <span class="sec-num">06</span>
+    <h2>Direitos do usuário</h2>
+    <p>O usuário pode, a qualquer momento:</p>
+    <ul>
+      <li>Exportar todos os seus dados em formato CSV diretamente pelo aplicativo</li>
+      <li>Solicitar a exclusão de sua conta e de todos os dados associados</li>
+      <li>Revogar o acesso da conta Google nas configurações do próprio dispositivo</li>
+    </ul>
+  </section>
+
+  <section>
+    <span class="sec-num">07</span>
+    <h2>Menores de idade</h2>
+    <p>O aplicativo não é direcionado a menores de 18 anos e não coleta intencionalmente dados de menores. Caso identifiquemos tal situação, os dados serão removidos imediatamente.</p>
+  </section>
+
+  <section>
+    <span class="sec-num">08</span>
+    <h2>Alterações desta política</h2>
+    <p>Eventuais alterações serão publicadas nesta página com atualização da data indicada no topo. O uso continuado do aplicativo após as alterações implica concordância com a nova versão.</p>
+  </section>
+
+  <section class="contact">
+    <span class="sec-num">09</span>
+    <h2>Contato</h2>
+    <p>Para dúvidas, solicitações de exclusão de dados ou qualquer questão relacionada à privacidade:</p>
+    <a href="mailto:juliano.heerdt@gmail.com" class="contact-email">
+      ✉ juliano.heerdt@gmail.com
+    </a>
+  </section>
+
+  <footer>
+    <p>&copy; 2026 <strong>Meu EV</strong> — Todos os direitos reservados.</p>
+    <p style="margin-top:6px">Desenvolvido no Brasil 🇧🇷</p>
+  </footer>
+
+</div>
+</body>
+</html>
