@@ -302,7 +302,7 @@
         <td class="num">${fmtNum(km,0,' km')}</td>
         <td class="num">${fmtConsumo(cm.consumo)}</td>
         <td class="num">${fmtBRL(r.custo_total)}</td>
-        <td><span class="badge ${r.tipo_recarga==='DC'?'badge-blue':'badge-green'}">${r.tipo_recarga||'AC'}</span></td>
+        <td><span class="badge ${r.tipo_recarga==='DC Rápido'?'badge-blue':r.tipo_recarga==='Casa'?'badge-green':'badge-yellow'}">${r.tipo_recarga||'--'}</span></td>
         <td><button class="btn-del" onclick="deletarRecarga('${r.id}')">🗑</button></td>
       </tr>`);
     });
@@ -329,11 +329,36 @@
   window.abrirModalRecarga = () => {
     document.getElementById('form-recarga').reset();
     document.getElementById('rec-data').value=new Date().toISOString().slice(0,16);
-    // Pré-preenche odômetro início com o fim da última recarga
     if(RECARGAS.length) document.getElementById('rec-od-ini').value=RECARGAS[0].odometro_fim||'';
     document.getElementById('modal-recarga').classList.add('open');
   };
   window.fecharModalRecarga = () => document.getElementById('modal-recarga').classList.remove('open');
+
+  function recalcularCamposRecarga(){
+    const batIni=parseFloat(document.getElementById('rec-bat-ini').value);
+    const batFim=parseFloat(document.getElementById('rec-bat-fim').value);
+    const tipo   =document.getElementById('rec-tipo').value;
+    const kwhField =document.getElementById('rec-kwh');
+    const custoField=document.getElementById('rec-custo');
+
+    // Calcula kWh pelo delta de bateria
+    if(!isNaN(batIni)&&!isNaN(batFim)&&batFim>batIni){
+      const kwh=((batFim-batIni)/100)*capBat();
+      kwhField.value=kwh.toFixed(2);
+    }
+
+    // Calcula custo se tipo Casa
+    if(tipo==='Casa'){
+      const kwh=parseFloat(kwhField.value);
+      const precoKwh=CONFIG?.custo_por_kwh_casa||0;
+      if(!isNaN(kwh)&&precoKwh>0){
+        custoField.value=(kwh*precoKwh).toFixed(2);
+      }
+    }
+  }
+
+  // Expõe para uso nos eventos inline do HTML
+  window.recalcularCamposRecarga = recalcularCamposRecarga;
 
   window.salvarRecarga = async () => {
     const data =document.getElementById('rec-data').value;
@@ -749,6 +774,7 @@
   .badge{display:inline-block;padding:2px 9px;border-radius:50px;font-size:.68rem;font-weight:700;font-family:var(--font-m);}
   .badge-green{background:rgba(0,230,118,.15);color:var(--verde);}
   .badge-blue{background:rgba(64,196,255,.15);color:var(--azul);}
+  .badge-yellow{background:rgba(255,215,64,.12);color:var(--yellow);}
   .badge-cat{background:rgba(255,215,64,.1);color:var(--yellow);}
   .empty{color:var(--tx2);font-size:.84rem;text-align:center;padding:20px;}
 
@@ -1031,7 +1057,11 @@
       <div class="form-row">
         <div class="form-group"><label>Data e hora *</label><input type="datetime-local" id="rec-data"/></div>
         <div class="form-group"><label>Tipo *</label>
-          <select id="rec-tipo"><option value="AC">AC — corrente alternada</option><option value="DC">DC — corrente contínua</option></select>
+          <select id="rec-tipo" onchange="recalcularCamposRecarga()">
+            <option value="Casa">🏠 Casa</option>
+            <option value="AC Público">🔌 AC Público</option>
+            <option value="DC Rápido">⚡ DC Rápido</option>
+          </select>
         </div>
       </div>
       <div class="form-row">
@@ -1041,17 +1071,17 @@
       <div class="form-row">
         <div class="form-group">
           <label>% Bateria ao chegar (início)</label>
-          <input type="number" id="rec-bat-ini" min="0" max="100" step="1" placeholder="ex: 20"/>
+          <input type="number" id="rec-bat-ini" min="0" max="100" step="1" placeholder="ex: 20" onchange="recalcularCamposRecarga()"/>
           <div class="form-hint">SOC ao iniciar a recarga — usado no cálculo de consumo real</div>
         </div>
         <div class="form-group">
           <label>% Bateria ao sair (fim)</label>
-          <input type="number" id="rec-bat-fim" min="0" max="100" step="1" placeholder="ex: 80"/>
+          <input type="number" id="rec-bat-fim" min="0" max="100" step="1" placeholder="ex: 80" onchange="recalcularCamposRecarga()"/>
           <div class="form-hint">SOC ao finalizar a recarga</div>
         </div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>kWh carregados *</label><input type="number" id="rec-kwh" step="0.01" placeholder="ex: 20.5"/></div>
+        <div class="form-group"><label>kWh carregados *</label><input type="number" id="rec-kwh" step="0.01" placeholder="ex: 20.5" onchange="recalcularCamposRecarga()"/></div>
         <div class="form-group"><label>Custo total (R$) *</label><input type="number" id="rec-custo" step="0.01" placeholder="ex: 18.00"/></div>
       </div>
       <div class="form-group" style="margin-top:2px"><label>Local</label><input type="text" id="rec-local" placeholder="ex: Shopping, Casa, Eletroposto…"/></div>
