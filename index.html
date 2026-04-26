@@ -203,6 +203,8 @@
     document.getElementById('bl-manut-total').textContent =fmtBRL(s.totalManut);
     document.getElementById('bl-manut-fixas').textContent =fmtBRL(s.fixas);
     document.getElementById('bl-manut-varrs').textContent =fmtBRL(s.varrs);
+    document.getElementById('bl-manut-fixas-km').textContent=fmtBRL(s.totalKm>0?s.fixas/s.totalKm:0)+'/km';
+    document.getElementById('bl-manut-varrs-km').textContent=fmtBRL(s.totalKm>0?s.varrs/s.totalKm:0)+'/km';
     document.getElementById('bl-manut-km').textContent    =fmtBRL(s.manutPorKm)+'/km';
     document.getElementById('bl-manut-n').textContent     =MANUTENCOES.length+' registros';
 
@@ -965,6 +967,10 @@
           <div><div class="comp-val" id="bl-comb-ev">—</div><div class="comp-lbl">Elétrico gastou</div></div>
           <div><div class="comp-val" style="color:var(--verde)" id="bl-comb-eco">—</div><div class="comp-lbl">💚 Economia</div></div>
         </div>
+        <div style="margin-top:14px;border-top:1px solid var(--borda);padding-top:12px">
+          <div class="card-title">Últimas recargas</div>
+          <div id="ultimas-recargas"></div>
+        </div>
       </div>
 
       <!-- Bloco Manutenção -->
@@ -972,9 +978,17 @@
         <div class="dash-block-title"><span class="ico">🔧</span> Manutenção</div>
         <div class="kv-grid">
           <div class="kv-item"><div class="kv-lbl">Total gasto</div><div class="kv-val yellow" id="bl-manut-total">—</div></div>
-          <div class="kv-item"><div class="kv-lbl">Custo / km</div><div class="kv-val" id="bl-manut-km">—</div></div>
-          <div class="kv-item"><div class="kv-lbl">Desp. fixas</div><div class="kv-val" id="bl-manut-fixas">—</div></div>
-          <div class="kv-item"><div class="kv-lbl">Desp. variáveis</div><div class="kv-val" id="bl-manut-varrs">—</div></div>
+          <div class="kv-item"><div class="kv-lbl">Custo total / km</div><div class="kv-val" id="bl-manut-km">—</div></div>
+          <div class="kv-item">
+            <div class="kv-lbl">Desp. fixas</div>
+            <div class="kv-val" id="bl-manut-fixas">—</div>
+            <div class="kv-sub" id="bl-manut-fixas-km">—</div>
+          </div>
+          <div class="kv-item">
+            <div class="kv-lbl">Desp. variáveis</div>
+            <div class="kv-val" id="bl-manut-varrs">—</div>
+            <div class="kv-sub" id="bl-manut-varrs-km">—</div>
+          </div>
         </div>
         <div style="font-size:.72rem;color:var(--tx2);margin-bottom:8px" id="bl-manut-n">—</div>
         <div id="bl-manut-cats"></div>
@@ -989,10 +1003,6 @@
           <div class="kv-item"><div class="kv-lbl">Manutenção</div><div class="kv-val yellow" id="bl-total-manut">—</div></div>
         </div>
         <div class="kv-item" style="margin-top:8px"><div class="kv-lbl">Custo total / km</div><div class="kv-val" id="bl-total-km">—</div></div>
-        <div style="margin-top:16px">
-          <div class="card-title">Últimas recargas</div>
-          <div id="ultimas-recargas"></div>
-        </div>
       </div>
     </div>
 
