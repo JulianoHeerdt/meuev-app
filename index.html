@@ -11,7 +11,8 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
-             sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup }
+             sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup,
+             createUserWithEmailAndPassword }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import { getFirestore, collection, doc, getDocs, getDoc, orderBy, query }
       from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -219,6 +220,18 @@
     };
 
     // ── Auth actions ─────────────────────────────────────────────────
+    let modoLogin = true; // true=login, false=cadastro
+
+    window.toggleModo = function() {
+      modoLogin = !modoLogin;
+      document.getElementById('login-title').textContent     = modoLogin ? 'Meu EV' : 'Criar conta';
+      document.getElementById('login-btn').textContent       = modoLogin ? 'Entrar' : 'Cadastrar';
+      document.getElementById('toggle-modo').textContent     = modoLogin ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Entrar';
+      document.getElementById('forgot-link').style.display   = modoLogin ? 'block' : 'none';
+      document.getElementById('google-wrap').style.display   = modoLogin ? 'block' : 'none';
+      document.getElementById('confirm-wrap').style.display  = modoLogin ? 'none' : 'block';
+    };
+
     window.doGoogleLogin = async function() {
       const btn = document.getElementById('google-btn');
       btn.disabled = true;
@@ -236,14 +249,31 @@
       const email = document.getElementById('email').value.trim();
       const pass  = document.getElementById('pass').value;
       const btn   = document.getElementById('login-btn');
-      btn.disabled = true;
-      btn.textContent = 'Entrando…';
+
+      if (!modoLogin) {
+        // ── Cadastro ──
+        const confirm = document.getElementById('pass-confirm').value;
+        if (pass !== confirm) { showToast('As senhas não coincidem.', true); return; }
+        if (pass.length < 6)  { showToast('Senha deve ter ao menos 6 caracteres.', true); return; }
+        btn.disabled = true; btn.textContent = 'Cadastrando…';
+        try {
+          await createUserWithEmailAndPassword(auth, email, pass);
+          showToast('Conta criada com sucesso!');
+        } catch(e) {
+          const msg = e.code === 'auth/email-already-in-use' ? 'E-mail já cadastrado.' : e.message;
+          showToast('Erro: ' + msg, true);
+          btn.disabled = false; btn.textContent = 'Cadastrar';
+        }
+        return;
+      }
+
+      // ── Login ──
+      btn.disabled = true; btn.textContent = 'Entrando…';
       try {
         await signInWithEmailAndPassword(auth, email, pass);
       } catch(e) {
         showToast('Erro: ' + (e.code === 'auth/invalid-credential' ? 'E-mail ou senha incorretos.' : e.message), true);
-        btn.disabled = false;
-        btn.textContent = 'Entrar';
+        btn.disabled = false; btn.textContent = 'Entrar';
       }
     };
 
@@ -383,6 +413,12 @@
       color: var(--tx2); font-size: .82rem; cursor: pointer; text-decoration: underline;
     }
     .forgot-link:hover { color: var(--verde); }
+
+    .toggle-link {
+      display: block; text-align: center; margin-top: 4px;
+      color: var(--verde); font-size: .85rem; cursor: pointer; font-weight: 600;
+    }
+    .toggle-link:hover { text-decoration: underline; }
 
     .btn-google {
       width: 100%; padding: 13px; margin-bottom: 4px;
@@ -586,22 +622,35 @@
   <div class="login-box">
     <div class="login-logo">
       <span class="bolt">⚡</span>
-      <span>Meu <span class="ev">EV</span></span>
+      <span id="login-title">Meu <span class="ev">EV</span></span>
     </div>
 
-    <!-- Google Sign-In -->
-    <button class="btn-google" id="google-btn" onclick="doGoogleLogin()">
-      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google
-    </button>
-
-    <div class="divider"><span>ou</span></div>
+    <!-- Google Sign-In (só no modo login) -->
+    <div id="google-wrap">
+      <button class="btn-google" id="google-btn" onclick="doGoogleLogin()">
+        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google
+      </button>
+      <div class="divider"><span>ou</span></div>
+    </div>
 
     <label for="email">E-mail</label>
     <input type="email" id="email" placeholder="seu@email.com" autocomplete="username" />
+
     <label for="pass">Senha</label>
     <input type="password" id="pass" placeholder="••••••••" autocomplete="current-password" />
+
+    <!-- Campo confirmação (só no cadastro) -->
+    <div id="confirm-wrap" style="display:none">
+      <label for="pass-confirm">Confirme a senha</label>
+      <input type="password" id="pass-confirm" placeholder="••••••••" />
+    </div>
+
     <button class="btn-primary" id="login-btn" onclick="doLogin()">Entrar</button>
-    <span class="forgot-link" onclick="doForgot()">Esqueci minha senha</span>
+
+    <span id="forgot-link" class="forgot-link" onclick="doForgot()">Esqueci minha senha</span>
+
+    <div class="divider" style="margin-top:8px"><span>conta</span></div>
+    <span id="toggle-modo" class="toggle-link" onclick="toggleModo()">Não tem conta? Cadastre-se</span>
   </div>
 </div>
 
