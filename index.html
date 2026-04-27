@@ -689,16 +689,42 @@
     if(!lista.length){showToast('Nenhuma recarga para exportar.',true);return;}
     const rows=lista.map(r=>{
       const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
-      return [fmtDate(r.data),r.local||'',r.kwh,r.odometro_inicio,r.odometro_fim,km,r.bateria_inicio_percent??'',r.bateria_fim_percent??'',r.custo_total,r.tipo_recarga||'AC',r.observacao||''].join(',');
+      const custoKwh=r.kwh>0?(r.custo_total/r.kwh).toFixed(3):'';
+      // Escapa campos de texto que podem conter vírgulas
+      const esc=v=>v&&v.includes(',')?`"${v}"`:v||'';
+      return [
+        fmtDate(r.data),
+        (r.odometro_inicio||0).toFixed(0),
+        (r.odometro_fim||0).toFixed(0),
+        km.toFixed(0),
+        (r.kwh||0).toFixed(2),
+        (r.custo_total||0).toFixed(2),
+        custoKwh,
+        esc(r.local),
+        r.tipo_recarga||'',
+        r.bateria_inicio_percent!=null?r.bateria_inicio_percent.toFixed(0):'',
+        r.bateria_fim_percent!=null?r.bateria_fim_percent.toFixed(0):'',
+        esc(r.observacao)
+      ].join(',');
     });
-    downloadCSV('recargas_meuev.csv',['Data,Local,kWh,Odôm.Ini,Odôm.Fim,Km,Bat.Ini%,Bat.Fim%,Custo,Tipo,Observação',...rows].join('\n'));
+    const header='Data,Odometro Inicio,Odometro Fim,Km,kWh,Custo Total,Custo/kWh,Local,Tipo,Bateria Inicio%,Bateria Fim%,Observacao';
+    downloadCSV('recargas_meuev.csv',[header,...rows].join('\n'));
     showToast('CSV exportado! 📥');
   };
 
   window.exportarManutencoesCSV = () => {
     if(!MANUTENCOES.length){showToast('Sem manutenções.',true);return;}
-    const rows=MANUTENCOES.map(m=>[fmtDate(m.data),m.tipo,m.descricao,m.fornecedor||'',m.odometro,m.custo].join(','));
-    downloadCSV('manutencoes_meuev.csv',['Data,Tipo,Descrição,Fornecedor,Odômetro,Custo',...rows].join('\n'));
+    const esc=v=>v&&v.includes(',')?`"${v}"`:v||'';
+    const rows=MANUTENCOES.map(m=>[
+      fmtDate(m.data),
+      m.tipo||'',
+      esc(m.descricao),
+      (m.custo||0).toFixed(2),
+      (m.odometro||0).toFixed(0),
+      esc(m.fornecedor)
+    ].join(','));
+    const header='Data,Tipo,Descricao,Custo,Odometro,Fornecedor';
+    downloadCSV('manutencoes_meuev.csv',[header,...rows].join('\n'));
     showToast('CSV exportado! 📥');
   };
 
@@ -706,26 +732,71 @@
   window.processarCSV = async input => {
     const file=input.files[0]; if(!file) return;
     const text=await file.text();
-    const linhas=text.split('\n').slice(1).filter(l=>l.trim());
+    // Normaliza quebras de linha Windows/Unix
+    const linhas=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+    if(!linhas.length){showToast('Arquivo vazio.',true);return;}
+
+    // Detecta e pula cabeçalho
+    const primeira=linhas[0].toLowerCase();
+    const temCabecalho=primeira.includes('data')||primeira.includes('odometro');
+    const inicio=temCabecalho?1:0;
+
+    const csvNum=s=>{ const v=(s||'').trim(); if(!v||v==='-') return 0; return parseFloat(v)||0; };
+    const parseDataBR=s=>{
+      s=s.trim();
+      // Formato dd/MM/yyyy
+      const p=s.split('/');
+      if(p.length===3) return new Date(`${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`).toISOString();
+      // Tenta ISO direto
+      return new Date(s).toISOString();
+    };
+
     let ok=0,erros=0; showLoading(true);
-    for(const linha of linhas){
+    for(let i=inicio;i<linhas.length;i++){
+      const linha=linhas[i].trim(); if(!linha) continue;
       try{
-        const cols=linha.split(',');
-        const [dataStr,local,kwh,odIni,odFim,,batIni,batFim,custo,tipo,obs]=cols;
-        const pts=dataStr.trim().split('/');
-        const iso=new Date(`${pts[2]}-${pts[1]}-${pts[0]}`).toISOString();
+        // Parser simples respeitando campos entre aspas
+        const cols=[]; let cur='',inQ=false;
+        for(const ch of linha+','){
+          if(ch==='"'){inQ=!inQ;}
+          else if(ch===','&&!inQ){cols.push(cur.trim());cur='';}
+          else cur+=ch;
+        }
+        if(cols.length<5) continue;
+
+        const data=parseDataBR(cols[0]);
+        const odIni=csvNum(cols[1]);
+        const odFim=csvNum(cols[2]);
+        // col[3]=Km (calculado, ignora)
+        // Detecta formato: se col[6] é numérico → tem Custo/kWh → offset=7
+        const isNum=s=>{ const v=(s||'').trim(); return !v||v==='-'||!isNaN(parseFloat(v)); };
+        let kwh,custo,offset;
+        if(cols.length>=7&&isNum(cols[6])){
+          kwh=csvNum(cols[4]); custo=csvNum(cols[5]); offset=7;
+        } else {
+          kwh=csvNum(cols[4]); custo=csvNum(cols[5]); offset=6;
+        }
+        const local    =cols.length>offset  ?cols[offset].replace(/^"|"$/g,''):'';
+        const tipo     =cols.length>offset+1?cols[offset+1].replace(/^"|"$/g,''):'';
+        const batIni   =cols.length>offset+2&&cols[offset+2].trim()!==''?parseFloat(cols[offset+2]):null;
+        const batFim   =cols.length>offset+3&&cols[offset+3].trim()!==''?parseFloat(cols[offset+3]):null;
+        const obs      =cols.length>offset+4?cols[offset+4].replace(/^"|"$/g,''):'';
+
         const id=genId();
         await setDoc(doc(db,'usuarios',uid(),'recargas',id),{
-          id,data:iso,odometro_inicio:parseFloat(odIni),odometro_fim:parseFloat(odFim),
-          kwh:parseFloat(kwh),custo_total:parseFloat(custo),
-          bateria_inicio_percent:batIni&&batIni.trim()!==''?parseFloat(batIni):null,
-          bateria_fim_percent:batFim&&batFim.trim()!==''?parseFloat(batFim):null,
-          local:local?.trim()||'',tipo_recarga:tipo?.trim()||'AC',observacao:obs?.trim()||''
+          id,data,
+          odometro_inicio:odIni, odometro_fim:odFim,
+          kwh, custo_total:custo,
+          local:local||'',
+          tipo_recarga:tipo||'Casa',
+          bateria_inicio_percent:batIni,
+          bateria_fim_percent:batFim,
+          observacao:obs||''
         });
         ok++;
-      }catch(e){ erros++; }
+      }catch(e){ erros++; console.warn('Linha '+(i+1)+':',e); }
     }
-    showToast(`Importadas: ${ok} recargas${erros?`, ${erros} erros`:''}.`);
+    showToast(`Importadas: ${ok} recarga${ok!==1?'s':''}${erros?` · ${erros} erro${erros!==1?'s':''}`:''}.`);
     input.value='';
   };
 
