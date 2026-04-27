@@ -14,7 +14,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged,
            sendPasswordResetEmail, GoogleAuthProvider, signInWithPopup,
-           createUserWithEmailAndPassword }
+           signInWithRedirect, getRedirectResult, createUserWithEmailAndPassword }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   import { getFirestore, collection, doc, getDocs, getDoc, setDoc,
            deleteDoc, orderBy, query, onSnapshot }
@@ -55,10 +55,17 @@
 
   window.doGoogleLogin = async () => {
     const btn=document.getElementById('google-btn');
-    btn.disabled=true; btn.textContent='Aguarde…';
-    try{ await signInWithPopup(auth,provider); }
+    btn.disabled=true; btn.textContent='Redirecionando…';
+    try{ await signInWithRedirect(auth,provider); }
     catch(e){ showToast('Erro Google: '+e.message,true); btn.disabled=false; btn.innerHTML='<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google'; }
   };
+
+  // Captura o resultado do redirect ao voltar do Google
+  getRedirectResult(auth).then(result=>{
+    if(result?.user) showToast('Login com Google realizado! ✅');
+  }).catch(e=>{
+    if(e.code!=='auth/no-current-user') showToast('Erro no login Google: '+e.message,true);
+  });
 
   let modoLogin=true;
   window.toggleModo = () => {
