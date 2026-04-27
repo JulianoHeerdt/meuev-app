@@ -55,8 +55,8 @@
 
   window.doGoogleLogin = async () => {
     const btn=document.getElementById('google-btn');
-    btn.disabled=true; btn.textContent='Redirecionando…';
-    try{ await signInWithRedirect(auth,provider); }
+    btn.disabled=true; btn.textContent='Aguarde…';
+    try{ await signInWithPopup(auth,provider); }
     catch(e){ showToast('Erro Google: '+e.message,true); btn.disabled=false; btn.innerHTML='<img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18"/> Entrar com Google'; }
   };
 
@@ -64,7 +64,7 @@
   getRedirectResult(auth).then(result=>{
     if(result?.user) showToast('Login com Google realizado! ✅');
   }).catch(e=>{
-    if(e.code!=='auth/no-current-user') showToast('Erro no login Google: '+e.message,true);
+    if(e.code!=='auth/no-current-user') console.warn('Redirect result:',e.code);
   });
 
   let modoLogin=true;
