@@ -247,9 +247,11 @@
     const totalKwh  =RECARGAS.reduce((s,r)=>s+(r.kwh||0),0);
     const totalCusto=RECARGAS.reduce((s,r)=>s+(r.custo_total||0),0);
     const totalKm   =RECARGAS.reduce((s,r)=>s+((r.odometro_fim||0)-(r.odometro_inicio||0)),0);
-    const consumoMap=calcConsumoReal(RECARGAS);
-    const consumos  =Object.values(consumoMap).filter(x=>x.consumo>0).map(x=>x.consumo);
-    const consumoMed=consumos.length?consumos.reduce((a,b)=>a+b,0)/consumos.length:0;
+
+    // Consumo acumulado: total kWh ÷ total km (método correto)
+    // Evita distorção da média aritmética onde recargas com poucos km
+    // têm o mesmo peso que recargas com muitos km
+    const consumoMed = totalKwh>0&&totalKm>0 ? totalKm/totalKwh : 0; // km/kWh acumulado
 
     // Manutenção
     const totalManut=MANUTENCOES.reduce((s,m)=>s+(m.custo||0),0);
