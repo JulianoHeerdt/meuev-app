@@ -461,13 +461,15 @@
 
   window.abrirUEPS = (id) => {
     const r=RECARGAS.find(x=>x.id===id); if(!r) return;
+    // Sempre recalcula para garantir dados atualizados
+    _consumoMap=calcConsumoReal(RECARGAS);
     const cm=_consumoMap[id]||{};
     const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
+    console.log('[UEPS] id:',id,'km:',km,'cm:',JSON.stringify(cm).slice(0,300));
 
     const el=document.getElementById('ueps-panel');
     const fmtPct=v=>v!=null?v.toFixed(1)+'%':'--';
 
-    // Cabeçalho da viagem
     document.getElementById('ueps-viagem-data').textContent =fmtDate(r.data);
     document.getElementById('ueps-viagem-local').textContent=r.local||'--';
     document.getElementById('ueps-viagem-km').textContent   =fmtNum(km,0,' km');
@@ -479,17 +481,19 @@
       r.bateria_inicio_percent!=null&&r.bateria_fim_percent!=null
         ?fmtPct(r.bateria_inicio_percent)+' → '+fmtPct(r.bateria_fim_percent):'--';
 
-    // Fontes de energia
     const tbody=document.getElementById('ueps-fontes');
     tbody.innerHTML='';
     const fontes=cm.fontes||[];
+    console.log('[UEPS] fontes:',fontes.length, fontes);
+
     if(!fontes.length){
-      tbody.innerHTML=`<tr><td colspan="6" class="empty" style="padding:12px">
-        ${cm.semDados?'Sem dados de % bateria para calcular UEPS.':'Nenhuma fonte de energia identificada.'}
-      </td></tr>`;
+      let msg='Nenhuma fonte de energia identificada.';
+      if(cm.semDados) msg='Sem dados de % bateria — não foi possível calcular UEPS.<br><small style="color:var(--tx2)">Edite a recarga e preencha "% Bateria ao chegar" e "% ao sair".</small>';
+      else if(km>0) msg='Esta é a primeira recarga do histórico — não há viagem anterior para calcular.';
+      tbody.innerHTML=`<tr><td colspan="7" class="empty" style="padding:16px;line-height:1.8">${msg}</td></tr>`;
     } else {
       fontes.forEach(f=>{
-        const barW=Math.round(f.pct);
+        const barW=Math.max(2,Math.round(f.pct));
         tbody.insertAdjacentHTML('beforeend',`<tr>
           <td>${fmtDate(f.data)}</td>
           <td>${f.local||'--'}</td>
@@ -497,22 +501,18 @@
           <td class="num">${f.kwUsado.toFixed(2)} kWh</td>
           <td class="num">${fmtBRL(f.custoPorKwh)}/kWh</td>
           <td class="num">${fmtBRL(f.custoFonte)}</td>
-          <td>
-            <div class="ueps-bar-wrap" title="${f.pct.toFixed(1)}% desta viagem">
-              <div class="ueps-bar" style="width:${barW}%"></div>
-              <span class="ueps-bar-lbl">${f.pct.toFixed(0)}%</span>
-            </div>
-          </td>
+          <td><div class="ueps-bar-wrap" title="${f.pct.toFixed(1)}% desta viagem">
+            <div class="ueps-bar" style="width:${barW}%"></div>
+            <span class="ueps-bar-lbl">${f.pct.toFixed(0)}%</span>
+          </div></td>
         </tr>`);
       });
     }
-
     if(cm.incompleto){
       tbody.insertAdjacentHTML('beforeend',`<tr><td colspan="7" style="padding:8px 10px;font-size:.75rem;color:var(--yellow)">
-        ⚠️ Estoque insuficiente para cobrir toda a viagem — parte do consumo sem custo rastreado.
+        ⚠️ Estoque insuficiente — parte do consumo sem custo rastreado.
       </td></tr>`);
     }
-
     el.classList.add('open');
   };
 
