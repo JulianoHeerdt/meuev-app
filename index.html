@@ -4,6 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Meu EV — Painel Web</title>
+  <meta name="version" content="v3.1"/>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
@@ -198,24 +199,16 @@
         const kwDisponivel=estoque[carga.id]||0;
         if(kwDisponivel<=0.001) continue;
         const custoPorKwh=(carga.custo_total||0)>0&&(carga.kwh||0)>0?carga.custo_total/carga.kwh:0;
-        if(custoPorKwh<=0) continue;
+        // Não pula recargas com custo zero — inclui na fonte com custo 0
         const kwUsado=Math.min(kwRestante,kwDisponivel);
         const custoFonte=kwUsado*custoPorKwh;
         custoTotal+=custoFonte;
         kwRestante-=kwUsado;
         estoque[carga.id]=kwDisponivel-kwUsado;
-
-        // Guarda detalhamento desta fonte
         fontes.push({
-          id:carga.id,
-          data:carga.data,
-          local:carga.local||'',
-          tipo:carga.tipo_recarga||'--',
-          kwTotal:carga.kwh||0,
-          kwUsado,
-          custoPorKwh,
-          custoFonte,
-          pct:0 // calculado abaixo
+          id:carga.id, data:carga.data, local:carga.local||'',
+          tipo:carga.tipo_recarga||'--', kwTotal:carga.kwh||0,
+          kwUsado, custoPorKwh, custoFonte, pct:0
         });
       }
 
@@ -465,7 +458,19 @@
     _consumoMap=calcConsumoReal(RECARGAS);
     const cm=_consumoMap[id]||{};
     const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
-    console.log('[UEPS] id:',id,'km:',km,'cm:',JSON.stringify(cm).slice(0,300));
+    console.log('[UEPS] recarga:', JSON.stringify({
+      id: r.id,
+      data: r.data,
+      bat_ini: r.bateria_inicio_percent,
+      bat_fim: r.bateria_fim_percent,
+      kwh: r.kwh,
+      custo: r.custo_total,
+      odIni: r.odometro_inicio,
+      odFim: r.odometro_fim
+    }));
+    console.log('[UEPS] cm:', JSON.stringify(cm));
+    console.log('[UEPS] total RECARGAS:', RECARGAS.length);
+    console.log('[UEPS] fontes encontradas:', (cm.fontes||[]).length);
 
     const el=document.getElementById('ueps-panel');
     const fmtPct=v=>v!=null?v.toFixed(1)+'%':'--';
