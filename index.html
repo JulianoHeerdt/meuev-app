@@ -525,6 +525,9 @@
     const tbody=document.getElementById('ueps-fontes');
     tbody.innerHTML='';
     const fontes=cm.fontes||[];
+    console.log('[UEPS] id:',id,'semDados:',cm.semDados,'fontes:',fontes.length,'kwConsumidos:',cm.kwConsumidos);
+    console.log('[UEPS] bat_ini:',r.bateria_inicio_percent,'bat_fim:',r.bateria_fim_percent);
+    if(fontes.length) console.log('[UEPS] fontes detalhe:',JSON.stringify(fontes.slice(0,3)));
 
     if(!fontes.length){
       let msg='Nenhuma fonte de energia identificada.';
