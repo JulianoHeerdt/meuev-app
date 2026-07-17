@@ -199,7 +199,7 @@
         const kwDisponivel=estoque[carga.id]||0;
         if(kwDisponivel<=0.001) continue;
         const custoPorKwh=(carga.custo_total||0)>0&&(carga.kwh||0)>0?carga.custo_total/carga.kwh:0;
-        // Não pula recargas com custo zero — inclui na fonte com custo 0
+        if(custoPorKwh<=0) continue; // igual ao app: recargas gratuitas não entram no custo
         const kwUsado=Math.min(kwRestante,kwDisponivel);
         const custoFonte=kwUsado*custoPorKwh;
         custoTotal+=custoFonte;
@@ -245,29 +245,49 @@
 
   // ── Stats ─────────────────────────────────────────────────────────
   function calcStats(){
+    if(!RECARGAS.length) return {totalKwh:0,totalCusto:0,totalKm:0,kmOdometro:0,
+      consumoMed:0,custoPorKm:0,custoPorKwh:0,totalManut:0,fixas:0,varrs:0,
+      manutPorKm:0,totalGeral:0,totalGeralPorKm:0,co2Evitado:0,litrosTotais:0,economiaIce:0};
+
     const totalKwh  =RECARGAS.reduce((s,r)=>s+(r.kwh||0),0);
     const totalCusto=RECARGAS.reduce((s,r)=>s+(r.custo_total||0),0);
+    // km por recarga (soma dos deltas odômetro) — igual ao app: totalKmPercorridos
     const totalKm   =RECARGAS.reduce((s,r)=>s+((r.odometro_fim||0)-(r.odometro_inicio||0)),0);
+    // km pelo odômetro (max - min) — igual ao app: kmTotal (para custo/km)
+    const odos      =RECARGAS.map(r=>r.odometro_fim||0).filter(v=>v>0);
+    const odosIni   =RECARGAS.map(r=>r.odometro_inicio||0).filter(v=>v>0);
+    const kmOdometro=odos.length&&odosIni.length ? Math.max(...odos)-Math.min(...odosIni) : totalKm;
 
-    // Consumo acumulado: total kWh ÷ total km (método correto)
-    // Evita distorção da média aritmética onde recargas com poucos km
-    // têm o mesmo peso que recargas com muitos km
-    const consumoMed = totalKwh>0&&totalKm>0 ? totalKm/totalKwh : 0; // km/kWh acumulado
+    // Consumo médio: kWh total / km total percorrido (igual ao app)
+    const consumoMed = totalKwh>0&&totalKm>0 ? totalKm/totalKwh : 0;
 
     // Manutenção
     const totalManut=MANUTENCOES.reduce((s,m)=>s+(m.custo||0),0);
     const fixas =MANUTENCOES.filter(m=>CATEGORIAS_FIXAS.includes(m.tipo)).reduce((s,m)=>s+(m.custo||0),0);
     const varrs =totalManut-fixas;
-    const kmTotal=totalKm||1;
+    const kmBase=kmOdometro||1;
 
-    return{totalKwh,totalCusto,totalKm,consumoMed,
-      custoPorKm:totalKm>0?totalCusto/totalKm:0,
+    // CO₂ evitado — fator 1.99 kg CO₂/litro (igual ao app)
+    const FATOR_CO2 = 1.99;
+    const consumoComb = CONFIG?.consumo_combustivel||12;
+    const precoComb   = CONFIG?.preco_combustivel||6;
+    const litrosTotais= totalKm>0&&consumoComb>0 ? totalKm/consumoComb : 0;
+    const co2Evitado  = litrosTotais * FATOR_CO2;
+
+    // Economia ICE total: (km/consumo)*preco - custo_eletrico (igual ao app)
+    const economiaIce = totalKm>0&&consumoComb>0
+      ? (totalKm/consumoComb)*precoComb - totalCusto : 0;
+
+    return{totalKwh,totalCusto,totalKm,kmOdometro,consumoMed,
+      custoPorKm:kmOdometro>0?totalCusto/kmOdometro:0,
       custoPorKwh:totalKwh>0?totalCusto/totalKwh:0,
       totalManut,fixas,varrs,
-      manutPorKm:totalManut/kmTotal,
-      recargaPorKm:totalKm>0?totalCusto/totalKm:0,
+      manutPorKm:totalManut/kmBase,
+      fixasPorKm:fixas/kmBase,
+      varrsPorKm:varrs/kmBase,
       totalGeral:totalCusto+totalManut,
-      totalGeralPorKm:(totalCusto+totalManut)/kmTotal
+      totalGeralPorKm:(totalCusto+totalManut)/kmBase,
+      co2Evitado, litrosTotais, economiaIce
     };
   }
 
@@ -288,30 +308,37 @@
     document.getElementById('veiculo-aut').textContent =c?fmtNum(c.autonomia_inmetro_km,0,' km'):'--';
 
     // ── Bloco Recargas ──
-    document.getElementById('bl-kwh').textContent      =fmtNum(s.totalKwh,1,' kWh');
-    document.getElementById('bl-km').textContent       =fmtNum(s.totalKm,0,' km');
-    document.getElementById('bl-consumo').textContent  =fmtConsumo(s.consumoMed);
-    document.getElementById('bl-custo-r').textContent  =fmtBRL(s.totalCusto);
+    document.getElementById('bl-kwh').textContent       =fmtNum(s.totalKwh,1,' kWh');
+    document.getElementById('bl-km').textContent        =fmtNum(s.totalKm,0,' km');
+    document.getElementById('bl-consumo').textContent   =fmtConsumo(s.consumoMed);
+    document.getElementById('bl-custo-r').textContent   =fmtBRL(s.totalCusto);
     document.getElementById('bl-custo-km-r').textContent=fmtBRL(s.custoPorKm)+'/km';
-    document.getElementById('bl-custo-kwh').textContent=fmtBRL(s.custoPorKwh)+'/kWh';
-    document.getElementById('bl-nrec').textContent     =RECARGAS.length+' recargas';
+    document.getElementById('bl-custo-kwh').textContent =fmtBRL(s.custoPorKwh)+'/kWh';
+    document.getElementById('bl-nrec').textContent      =RECARGAS.length+' recargas';
 
-    // Comparativo
+    // CO₂ evitado total — fator 1.99 kg/litro (igual ao app)
+    const fmtCO2t = v => v>=1000?(v/1000).toFixed(2)+' t':v.toFixed(1)+' kg';
+    document.getElementById('bl-co2-evitado').textContent = s.co2Evitado>0?fmtCO2t(s.co2Evitado)+' CO₂':'--';
+    document.getElementById('bl-co2-litros').textContent  = s.litrosTotais>0
+      ?(s.litrosTotais.toFixed(0)+' L gasolina equiv. × 1,99 kg/L'):'--';
+
+    // Comparativo — usa economiaIce calculada igual ao app
     if(c){
       const gasol=s.totalKm>0?(s.totalKm/(c.consumo_combustivel||12))*(c.preco_combustivel||6):0;
       document.getElementById('bl-comb-gasto').textContent=fmtBRL(gasol);
       document.getElementById('bl-comb-ev').textContent   =fmtBRL(s.totalCusto);
-      document.getElementById('bl-comb-eco').textContent  =fmtBRL(Math.max(0,gasol-s.totalCusto));
+      document.getElementById('bl-comb-eco').textContent  =fmtBRL(Math.max(0,s.economiaIce));
     }
 
-    // ── Bloco Manutenção ──
-    document.getElementById('bl-manut-total').textContent =fmtBRL(s.totalManut);
-    document.getElementById('bl-manut-fixas').textContent =fmtBRL(s.fixas);
-    document.getElementById('bl-manut-varrs').textContent =fmtBRL(s.varrs);
-    document.getElementById('bl-manut-fixas-km').textContent=fmtBRL(s.totalKm>0?s.fixas/s.totalKm:0)+'/km';
-    document.getElementById('bl-manut-varrs-km').textContent=fmtBRL(s.totalKm>0?s.varrs/s.totalKm:0)+'/km';
-    document.getElementById('bl-manut-km').textContent    =fmtBRL(s.manutPorKm)+'/km';
-    document.getElementById('bl-manut-n').textContent     =MANUTENCOES.length+' registros';
+    // ── Bloco Manutenção — custo/km usa kmOdometro (igual ao app) ──
+    const km4manut=s.kmOdometro||1;
+    document.getElementById('bl-manut-total').textContent    =fmtBRL(s.totalManut);
+    document.getElementById('bl-manut-fixas').textContent    =fmtBRL(s.fixas);
+    document.getElementById('bl-manut-varrs').textContent    =fmtBRL(s.varrs);
+    document.getElementById('bl-manut-fixas-km').textContent =fmtBRL(s.fixas/km4manut)+'/km';
+    document.getElementById('bl-manut-varrs-km').textContent =fmtBRL(s.varrs/km4manut)+'/km';
+    document.getElementById('bl-manut-km').textContent       =fmtBRL(s.totalManut/km4manut)+'/km';
+    document.getElementById('bl-manut-n').textContent        =MANUTENCOES.length+' registros';
 
     // Subcategorias manutenção
     const catDiv=document.getElementById('bl-manut-cats'); catDiv.innerHTML='';
@@ -454,23 +481,22 @@
 
   window.abrirUEPS = (id) => {
     const r=RECARGAS.find(x=>x.id===id); if(!r) return;
-    // Sempre recalcula para garantir dados atualizados
     _consumoMap=calcConsumoReal(RECARGAS);
     const cm=_consumoMap[id]||{};
     const km=(r.odometro_fim||0)-(r.odometro_inicio||0);
-    console.log('[UEPS] recarga:', JSON.stringify({
-      id: r.id,
-      data: r.data,
-      bat_ini: r.bateria_inicio_percent,
-      bat_fim: r.bateria_fim_percent,
-      kwh: r.kwh,
-      custo: r.custo_total,
-      odIni: r.odometro_inicio,
-      odFim: r.odometro_fim
-    }));
-    console.log('[UEPS] cm:', JSON.stringify(cm));
-    console.log('[UEPS] total RECARGAS:', RECARGAS.length);
-    console.log('[UEPS] fontes encontradas:', (cm.fontes||[]).length);
+
+    // ── Economia por viagem (igual ao app) ──────────────────────────
+    // (km / consumoComb) * precoComb - custoUEPS
+    const consumoComb = CONFIG?.consumo_combustivel||12;
+    const precoComb   = CONFIG?.preco_combustivel||6;
+    const litrosEquiv = km>0 ? km/consumoComb : 0;
+    const custoComb   = litrosEquiv * precoComb;
+    const economia    = cm.custoTotal>0 ? custoComb - cm.custoTotal : 0;
+    const pctEco      = custoComb>0 ? (economia/custoComb*100) : 0;
+
+    // ── CO₂ evitado por viagem — fator 1.99 kg/litro (igual ao app) ─
+    const FATOR_CO2 = 1.99;
+    const co2Evitado = litrosEquiv * FATOR_CO2;
 
     const el=document.getElementById('ueps-panel');
     const fmtPct=v=>v!=null?v.toFixed(1)+'%':'--';
@@ -486,10 +512,19 @@
       r.bateria_inicio_percent!=null&&r.bateria_fim_percent!=null
         ?fmtPct(r.bateria_inicio_percent)+' → '+fmtPct(r.bateria_fim_percent):'--';
 
+    // Economia e CO₂
+    const fmtCO2=v=>v>=1000?(v/1000).toFixed(2)+' t':v.toFixed(2)+' kg';
+    document.getElementById('ueps-comb-custo').textContent  = km>0?fmtBRL(custoComb):'--';
+    document.getElementById('ueps-comb-litros').textContent = km>0?litrosEquiv.toFixed(1)+' L gasolina equiv.':'--';
+    document.getElementById('ueps-economia').textContent    = km>0&&cm.custoTotal>0
+      ? fmtBRL(economia)+' ('+(economia>=0?'+':'')+pctEco.toFixed(1)+'%)' : '--';
+    document.getElementById('ueps-co2-evitado').textContent = km>0?fmtCO2(co2Evitado):'--';
+    document.getElementById('ueps-co2-gasolina').textContent= km>0?litrosEquiv.toFixed(1)+' L × 1,99 kg/L':'--';
+    document.getElementById('ueps-co2-eletrico').textContent= km>0?fmtCO2(co2Evitado)+' evitados':'--';
+
     const tbody=document.getElementById('ueps-fontes');
     tbody.innerHTML='';
     const fontes=cm.fontes||[];
-    console.log('[UEPS] fontes:',fontes.length, fontes);
 
     if(!fontes.length){
       let msg='Nenhuma fonte de energia identificada.';
@@ -1225,9 +1260,34 @@
   .ueps-explicacao p{font-size:.82rem;color:var(--tx2);line-height:1.55;}
   .ueps-explicacao strong{color:var(--tx1);}
   .ueps-fontes-title{font-size:.78rem;font-weight:700;color:var(--tx2);text-transform:uppercase;letter-spacing:.07em;}
+  /* Card CO₂ dashboard */
+  .co2-card{display:flex;align-items:center;gap:12px;background:rgba(0,230,118,.06);border:1px solid rgba(0,230,118,.2);border-radius:12px;padding:12px 14px;margin-bottom:10px;}
+  .co2-icon{font-size:1.6rem;flex-shrink:0;}
+  .co2-info{display:flex;flex-direction:column;gap:2px;}
+  .co2-lbl{font-size:.68rem;color:var(--tx2);text-transform:uppercase;letter-spacing:.06em;}
+  .co2-val{font-family:var(--font-m);font-size:1.1rem;font-weight:700;color:var(--verde);}
+  .co2-sub{font-size:.7rem;color:var(--tx2);}
+
   .ueps-bar-wrap{display:flex;align-items:center;gap:6px;min-width:100px;}
   .ueps-bar{height:8px;background:linear-gradient(to right,var(--verde),var(--azul));border-radius:4px;transition:width .4s ease;min-width:2px;}
   .ueps-bar-lbl{font-size:.7rem;color:var(--tx2);white-space:nowrap;font-family:var(--font-m);}
+
+  /* Cards economia e CO₂ */
+  .ueps-eco-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  @media(max-width:600px){.ueps-eco-grid{grid-template-columns:1fr;}}
+  .ueps-eco-card{border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;border:1px solid var(--borda);}
+  .ueps-eco-comb{background:rgba(255,82,82,.06);border-color:rgba(255,82,82,.2);}
+  .ueps-eco-save{background:rgba(0,230,118,.06);border-color:rgba(0,230,118,.2);}
+  .ueps-eco-co2{background:rgba(64,196,255,.06);border-color:rgba(64,196,255,.2);}
+  .ueps-eco-icon{font-size:1.2rem;margin-bottom:2px;}
+  .ueps-eco-lbl{font-size:.68rem;color:var(--tx2);text-transform:uppercase;letter-spacing:.06em;}
+  .ueps-eco-val{font-family:var(--font-m);font-size:1.1rem;font-weight:700;}
+  .ueps-eco-comb .ueps-eco-val{color:var(--red);}
+  .ueps-eco-save .ueps-eco-val{color:var(--verde);}
+  .ueps-eco-co2  .ueps-eco-val{color:var(--azul);}
+  .ueps-eco-sub{font-size:.7rem;color:var(--tx2);}
+  .ueps-eco-sub-detail{display:flex;flex-direction:column;gap:2px;font-size:.7rem;color:var(--tx2);}
+  .ueps-eco-sub-detail b{color:var(--tx1);font-family:var(--font-m);}
 
   .footer-note{text-align:center;color:var(--tx2);font-size:.74rem;padding:22px;border-top:1px solid var(--borda);margin-top:8px;}
   .footer-note a{color:var(--verde);text-decoration:none;}
@@ -1316,6 +1376,16 @@
           <div class="kv-item"><div class="kv-lbl">Custo / kWh</div><div class="kv-val" id="bl-custo-kwh">—</div></div>
         </div>
         <div style="font-size:.72rem;color:var(--tx2);margin-bottom:8px" id="bl-nrec">—</div>
+
+        <!-- CO₂ evitado -->
+        <div class="co2-card">
+          <div class="co2-icon">🌿</div>
+          <div class="co2-info">
+            <div class="co2-lbl">CO₂ deixado de emitir</div>
+            <div class="co2-val" id="bl-co2-evitado">—</div>
+            <div class="co2-sub" id="bl-co2-litros">—</div>
+          </div>
+        </div>
         <div class="comp-row">
           <div><div class="comp-val" style="color:var(--red)" id="bl-comb-gasto">—</div><div class="comp-lbl">Gasolina custaria</div></div>
           <div><div class="comp-val" id="bl-comb-ev">—</div><div class="comp-lbl">Elétrico gastou</div></div>
@@ -1593,6 +1663,31 @@
       <div class="ueps-kv"><div class="ueps-lbl">Bateria</div><div class="ueps-val" id="ueps-viagem-bat">--</div></div>
       <div class="ueps-kv"><div class="ueps-lbl">Custo total viagem</div><div class="ueps-val verde" id="ueps-viagem-custo">--</div></div>
       <div class="ueps-kv"><div class="ueps-lbl">Custo / km</div><div class="ueps-val verde" id="ueps-viagem-km-r">--</div></div>
+    </div>
+
+    <!-- Economia vs combustão -->
+    <div class="ueps-eco-grid">
+      <div class="ueps-eco-card ueps-eco-comb">
+        <div class="ueps-eco-icon">⛽</div>
+        <div class="ueps-eco-lbl">Custaria em gasolina</div>
+        <div class="ueps-eco-val" id="ueps-comb-custo">--</div>
+        <div class="ueps-eco-sub" id="ueps-comb-litros">--</div>
+      </div>
+      <div class="ueps-eco-card ueps-eco-save">
+        <div class="ueps-eco-icon">💰</div>
+        <div class="ueps-eco-lbl">Economia esta viagem</div>
+        <div class="ueps-eco-val" id="ueps-economia">--</div>
+        <div class="ueps-eco-sub">vs veículo a combustão</div>
+      </div>
+      <div class="ueps-eco-card ueps-eco-co2">
+        <div class="ueps-eco-icon">🌿</div>
+        <div class="ueps-eco-lbl">CO₂ evitado</div>
+        <div class="ueps-eco-val" id="ueps-co2-evitado">--</div>
+        <div class="ueps-eco-sub-detail">
+          <span>Gasolina: <b id="ueps-co2-gasolina">--</b></span>
+          <span>Elétrico: <b id="ueps-co2-eletrico">--</b></span>
+        </div>
+      </div>
     </div>
 
     <!-- Explicação UEPS -->
